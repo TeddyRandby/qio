@@ -276,6 +276,12 @@ qd_t qopenat(qfd_t fd, const char *path) {
   });
 }
 
+/*
+ * Some of these SQE's have arguments in places that make sense (read, write).
+ * Some of them are all over the place (socket, accept).
+ * Check liburing on github for useful examples of how to create SQE's for every IO_URING op.
+ */
+
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return append_sqe(&(struct io_uring_sqe){
