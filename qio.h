@@ -272,7 +272,7 @@ qd_t qopenat(qfd_t fd, const char *path) {
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
       .addr = (uintptr_t)path,
-      .open_flags = O_RDWR,
+      .open_flags = O_RDWR | O_CREAT,
   });
 }
 
