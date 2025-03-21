@@ -16,7 +16,7 @@ typedef /* os_fd_type */ qfd_t;
  *  - Check on the status of its corresponding operation.
  *  - Get the result of its operation
  */
-typedef uint64_t qd_t;
+typedef int64_t qd_t;
 
 /*
  * %----------------%
@@ -74,6 +74,8 @@ qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 qd_t qsocket(int domain, int protocol, int type);
 qd_t qaccept(qfd_t fd, void* addr, void* addrlen, uint32_t flags);
+qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
+qd_t qclose(qfd_t fd);
 
 qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
