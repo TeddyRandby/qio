@@ -1,6 +1,5 @@
 #include "qio.h"
 
-#include <fcntl.h>
 #include <stdio.h>
 #include <threads.h>
 

@@ -10,13 +10,13 @@
  */
 #ifdef QIO_LINUX
 
+#include <fcntl.h>
 #include <linux/io_uring.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
-#include <fcntl.h>
 
 typedef int qfd_t;
 
@@ -44,7 +44,7 @@ typedef uint64_t qfd_t;
  *  - Check on the status of its corresponding operation.
  *  - Get the result of its operation
  */
-typedef uint64_t qd_t;
+typedef int64_t qd_t;
 
 /*
  * Initialize QIO. This should only be called *once* per thread.
@@ -59,14 +59,16 @@ QIO_API void qio_destroy();
 /*
  * The following are the 'queued' versions of corresponding POSIX functions.
  */
-QIO_API qd_t qopen(const char* path);
+QIO_API qd_t qopen(const char *path);
 QIO_API qd_t qopenat(qfd_t fd, const char *path);
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 QIO_API qd_t qsocket(int domain, int protocol, int type);
-QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags);
+QIO_API qd_t qaccept(qfd_t fd, void *addr, void* addrlen, uint32_t flags);
+QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
+QIO_API qd_t qclose(qfd_t fd);
 
 QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
@@ -254,15 +256,13 @@ qd_t append_sqe(struct io_uring_sqe *src_sqe) {
   return qid;
 }
 
-qd_t qopen(const char *path) {
-  return qopenat(AT_FDCWD, path);
-}
+qd_t qopen(const char *path) { return qopenat(AT_FDCWD, path); }
 
 qd_t qopenat(qfd_t fd, const char *path) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
-      .addr = (uintptr_t) path,
+      .addr = (uintptr_t)path,
       .open_flags = O_RDWR,
   });
 }
@@ -306,7 +306,7 @@ qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
-qd_t qsocket(int domain, int protocol, int type) {
+qd_t qsocket(int domain, int type, int protocol) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SOCKET,
       .fd = domain,
@@ -315,12 +315,29 @@ qd_t qsocket(int domain, int protocol, int type) {
   });
 }
 
-qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
+qd_t qclose(qfd_t fd) {
+  return append_sqe(&(struct io_uring_sqe){
+      .opcode = IORING_OP_CLOSE,
+      .fd = fd,
+  });
+}
+
+qd_t qaccept(qfd_t fd, void *addr, void* addrlen, uint32_t flags) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_ACCEPT,
       .fd = fd,
       .accept_flags = flags,
-      .off = 0,
+      .addr = (uintptr_t)addr,
+    .off = (uintptr_t) addrlen,
+  });
+}
+
+QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
+  return append_sqe(&(struct io_uring_sqe){
+      .opcode = IORING_OP_CONNECT,
+      .fd = fd,
+      .addr = (uintptr_t)addr,
+      .off = addrlen,
   });
 }
 
