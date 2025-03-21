@@ -66,7 +66,7 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 QIO_API qd_t qsocket(int domain, int protocol, int type);
-QIO_API qd_t qaccept(qfd_t fd, void *addr, void* addrlen, uint32_t flags);
+QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags);
 QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
 QIO_API qd_t qclose(qfd_t fd);
 
@@ -89,6 +89,7 @@ struct qio_op_t {
  * it is almost *always* the case that IO operations qre queued from
  * a different thread than the one running the qio_loop. Because of this,
  * these data structures need to be thread-safe and static.
+ * TODO: FIXME: Make this data-structure thread-safe.
  */
 static v_qd qds;
 
@@ -109,6 +110,7 @@ QIO_API int8_t qd_status(qd_t qd) {
 QIO_API int64_t qd_result(qd_t qd) {
   assert(qd < qds.len);
 
+  // Simply block until we have received a response from the os.
   while (!qd_status(qd))
     ;
 
@@ -153,9 +155,15 @@ QIO_API int32_t qio_loop() {
       return -1;
 
     struct qio_op_t *op = v_qd_ref_at(&qds, qid);
-    op->done = true;
     op->result = cqe->res;
     op->flags = cqe->flags;
+    /*
+     * Update this last.
+     * Any number of other threads may be blocking, waiting on this flag to be
+     * flipped. We want to ensure the rest of the op is in a valid state before
+     * they may look.
+     */
+    op->done = true;
 
     /* Write barrier so that update to the head are made visible */
     io_uring_smp_store_release(cring_head, head);
@@ -164,6 +172,7 @@ QIO_API int32_t qio_loop() {
 
 QIO_API void qio_destroy() {}
 
+/* FIXME: Figure out a better syscall intrinsic system */
 int io_uring_setup(unsigned entries, struct io_uring_params *p) {
   return (int)syscall(__NR_io_uring_setup, entries, p);
 }
@@ -322,13 +331,13 @@ qd_t qclose(qfd_t fd) {
   });
 }
 
-qd_t qaccept(qfd_t fd, void *addr, void* addrlen, uint32_t flags) {
+qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_ACCEPT,
       .fd = fd,
       .accept_flags = flags,
       .addr = (uintptr_t)addr,
-    .off = (uintptr_t) addrlen,
+      .off = (uintptr_t)addrlen,
   });
 }
 
