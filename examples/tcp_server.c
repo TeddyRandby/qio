@@ -59,6 +59,8 @@ int main() {
   if (listen(server_sock, wait_size) < 0)
     return printf("[ERROR] Could not open socket for listening\n"), 1;
 
+  printf("[INFO] Listening on port %i\n", server_port);
+
   // socket address used to store client address
   struct sockaddr_in client_address;
   int client_address_len = 0;

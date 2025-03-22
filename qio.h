@@ -81,6 +81,7 @@ struct qio_op_t {
 
 #define T struct qio_op_t
 #define NAME qd
+#define V_CONCURRENT
 #include "vector.h"
 
 /*
@@ -185,6 +186,9 @@ int io_uring_enter(unsigned int fd, unsigned int to_submit,
 }
 
 QIO_API int32_t qio_init(uint64_t size) {
+  /* Initialize qds. All OS's need to do this. */
+  v_qd_create(&qds, 64);
+  
   struct io_uring_params p = {0};
   /* The submission and completion queue */
   void *sq, *cq;
