@@ -69,7 +69,7 @@ void qio_destroy(uint64_t size);
 qd_t qopen(const char* path);
 qd_t qopenat(qfd_t fd, const char* path);
 
-qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
+qd_t qread(qfd_t fd, uint64_t offset, uint64_t n, uint8_t buf[n]);
 qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 qd_t qsocket(int domain, int protocol, int type);

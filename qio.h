@@ -62,7 +62,7 @@ QIO_API void qio_destroy();
 QIO_API qd_t qopen(const char *path);
 QIO_API qd_t qopenat(qfd_t fd, const char *path);
 
-QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
+QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 QIO_API qd_t qsocket(int domain, int protocol, int type);
@@ -188,7 +188,7 @@ int io_uring_enter(unsigned int fd, unsigned int to_submit,
 QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
   v_qd_create(&qds, 64);
-  
+
   struct io_uring_params p = {0};
   /* The submission and completion queue */
   void *sq, *cq;
@@ -283,16 +283,18 @@ qd_t qopenat(qfd_t fd, const char *path) {
 /*
  * Some of these SQE's have arguments in places that make sense (read, write).
  * Some of them are all over the place (socket, accept).
- * Check liburing on github for useful examples of how to create SQE's for every IO_URING op.
+ * Check liburing on github for useful examples of how to create SQE's for every
+ * IO_URING op.
  */
 
-QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qread(qfd_t fd, int64_t offset, uint64_t n, uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_READ,
       .fd = fd,
       .addr = (uintptr_t)buf,
       .len = n,
+      .off = offset,
   });
 }
 
