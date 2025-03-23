@@ -5,9 +5,6 @@
 
 #define QIO_API static inline
 
-/*
- * Abstraction over os file/pipe/console/socket types.
- */
 #ifdef QIO_LINUX
 
 #include <fcntl.h>
@@ -18,6 +15,9 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+/*
+ * Abstraction over os file/pipe/console/socket types.
+ */
 typedef int qfd_t;
 
 #elifdef QIO_MACOS
@@ -101,7 +101,7 @@ static v_qd qds;
  */
 QIO_API int8_t qd_status(qd_t qd) {
   assert(qd < qds.len);
-  return v_qd_ref_at(&qds, qd)->done;
+  return v_qd_val_at(&qds, qd).done;
 }
 
 /*
@@ -115,7 +115,7 @@ QIO_API int64_t qd_result(qd_t qd) {
   while (!qd_status(qd))
     ;
 
-  return v_qd_ref_at(&qds, qd)->result;
+  return v_qd_val_at(&qds, qd).result;
 }
 
 #ifdef QIO_LINUX
@@ -127,11 +127,17 @@ QIO_API int64_t qd_result(qd_t qd) {
 
 static qfd_t ring;
 
-static uint32_t *sring_tail, *sring_mask, *sring_array, *cring_head,
+static uint32_t *sring_tail, *sring_head, *sring_mask, *sring_array, *cring_head,
     *cring_tail, *cring_mask;
 
 static struct io_uring_sqe *sqes;
 static struct io_uring_cqe *cqes;
+static uint32_t ring_entries;
+
+#define T struct io_uring_sqe
+#define NAME sqe
+#define V_CONCURRENT
+#include "vector.h"
 
 QIO_API int32_t qio_loop() {
   while (true) {
@@ -152,19 +158,26 @@ QIO_API int32_t qio_loop() {
 
     qd_t qid = cqe->user_data;
 
-    if (qid > qds.len)
-      return -1;
-
-    struct qio_op_t *op = v_qd_ref_at(&qds, qid);
-    op->result = cqe->res;
-    op->flags = cqe->flags;
+    assert(qid < qds.len);
+    assert(v_qd_val_at(&qds, qid).done == false);
+    assert(v_qd_val_at(&qds, qid).flags == 0);
+    assert(v_qd_val_at(&qds, qid).result == 0);
     /*
-     * Update this last.
-     * Any number of other threads may be blocking, waiting on this flag to be
-     * flipped. We want to ensure the rest of the op is in a valid state before
-     * they may look.
+     * Perform this via a set for two resons:
+     *  - The struct is small enough that passying and copying by value is fine
+     *  - This performes the update in *one atomic operation*. Holding pointers
+     *    into the vector is *unsafe* in a concurrent vector, as the array could
+     *    be reallocated out from underneath you.
      */
-    op->done = true;
+    v_qd_set(&qds, qid,
+             (struct qio_op_t){
+                 .result = cqe->res,
+                 .flags = cqe->flags,
+                 .done = true,
+             });
+    assert(v_qd_val_at(&qds, qid).done == true);
+    assert(v_qd_val_at(&qds, qid).flags == cqe->flags);
+    assert(v_qd_val_at(&qds, qid).result == cqe->res);
 
     /* Write barrier so that update to the head are made visible */
     io_uring_smp_store_release(cring_head, head);
@@ -187,13 +200,14 @@ int io_uring_enter(unsigned int fd, unsigned int to_submit,
 
 QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
+  ring_entries = size;
   v_qd_create(&qds, 64);
 
   struct io_uring_params p = {0};
   /* The submission and completion queue */
   void *sq, *cq;
 
-  ring = io_uring_setup(size, &p);
+  ring = io_uring_setup(ring_entries, &p);
   if (ring < 0)
     return -1;
 
@@ -223,6 +237,7 @@ QIO_API int32_t qio_init(uint64_t size) {
   }
 
   sring_tail = (uint32_t *)((uint8_t *)sq + p.sq_off.tail);
+  sring_head = (uint32_t *)((uint8_t *)sq + p.sq_off.head);
   sring_mask = (uint32_t *)((uint8_t *)sq + p.sq_off.ring_mask);
   sring_array = (uint32_t *)((uint8_t *)sq + p.sq_off.array);
 
@@ -244,10 +259,12 @@ QIO_API int32_t qio_init(uint64_t size) {
 }
 
 qd_t append_sqe(struct io_uring_sqe *src_sqe) {
-  struct qio_op_t *op = v_qd_emplace(&qds);
-  memset(op, 0, sizeof(struct qio_op_t));
+  qd_t qid = v_qd_push(&qds, (struct qio_op_t){});
   assert(qds.len > 0);
-  qd_t qid = qds.len - 1;
+
+  // Block until there is space in the iorung queue. This is not good.
+  while (sring_tail - sring_head >= ring_entries)
+      ;
 
   unsigned index, tail;
   tail = *sring_tail;
