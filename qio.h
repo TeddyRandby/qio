@@ -139,8 +139,49 @@ static uint32_t ring_entries;
 #define V_CONCURRENT
 #include "vector.h"
 
+static v_sqe queued_sqes;
+
+/* FIXME: Figure out a better syscall intrinsic system */
+int io_uring_setup(unsigned entries, struct io_uring_params *p) {
+  return (int)syscall(__NR_io_uring_setup, entries, p);
+}
+
+int io_uring_enter(unsigned int fd, unsigned int to_submit,
+                   unsigned int min_complete, unsigned int flags,
+                   sigset_t *sig) {
+  return (int)syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
+                      sig);
+}
+
 QIO_API int32_t qio_loop() {
   while (true) {
+    int buffered_sqes = queued_sqes.len;
+    assert(buffered_sqes < ring_entries);
+    /*
+     * Issues, as sqe's can be added *during* this loop.
+     */
+    for (int i = 0; i < buffered_sqes; i++) {
+      struct io_uring_sqe src_sqe = v_sqe_pop(&queued_sqes);
+
+      unsigned index, tail;
+      tail = *sring_tail;
+      index = tail & *sring_mask;
+
+      assert(src_sqe.user_data < qds.len);
+      struct io_uring_sqe *dst_sqe = &sqes[index];
+      memcpy(dst_sqe, &src_sqe, sizeof(struct io_uring_sqe));
+
+      sring_array[index] = index;
+      tail++;
+
+      /* Update the tail */
+      io_uring_smp_store_release(sring_tail, tail);
+    }
+
+    /* System call to trigger kernel */
+    if (buffered_sqes)
+      io_uring_enter(ring, buffered_sqes, 0, 0, nullptr);
+
     struct io_uring_cqe *cqe;
     unsigned head;
 
@@ -185,18 +226,6 @@ QIO_API int32_t qio_loop() {
 }
 
 QIO_API void qio_destroy() {}
-
-/* FIXME: Figure out a better syscall intrinsic system */
-int io_uring_setup(unsigned entries, struct io_uring_params *p) {
-  return (int)syscall(__NR_io_uring_setup, entries, p);
-}
-
-int io_uring_enter(unsigned int fd, unsigned int to_submit,
-                   unsigned int min_complete, unsigned int flags,
-                   sigset_t *sig) {
-  return (int)syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
-                      sig);
-}
 
 QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
@@ -262,26 +291,8 @@ qd_t append_sqe(struct io_uring_sqe *src_sqe) {
   qd_t qid = v_qd_push(&qds, (struct qio_op_t){});
   assert(qds.len > 0);
 
-  // Block until there is space in the iorung queue. This is not good.
-  while (sring_tail - sring_head >= ring_entries)
-      ;
-
-  unsigned index, tail;
-  tail = *sring_tail;
-  index = tail & *sring_mask;
-
-  struct io_uring_sqe *dst_sqe = &sqes[index];
-  memcpy(dst_sqe, src_sqe, sizeof(struct io_uring_sqe));
-  dst_sqe->user_data = qid;
-
-  sring_array[index] = index;
-  tail++;
-
-  /* Update the tail */
-  io_uring_smp_store_release(sring_tail, tail);
-
-  /* System call to trigger kernel */
-  io_uring_enter(ring, 1, 0, 0, nullptr);
+  src_sqe->user_data = qid;
+  v_sqe_push(&queued_sqes, *src_sqe);
 
   return qid;
 }

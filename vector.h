@@ -90,8 +90,11 @@ LINKAGE size_t METHOD(push)(TYPENAME *self, T value) {
     self->data = GROW(T, self->data, self->cap);
   }
 
+  size_t idx = self->len++;
+  self->data[idx] = value;
+
   RELEASE_LOCK(self);
-  return METHOD(set)(self, self->len++, value);
+  return idx;
 }
 
 LINKAGE T METHOD(pop)(TYPENAME *self) {
