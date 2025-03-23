@@ -3,10 +3,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-#define T struct qio_op_t
-#define NAME qd
-#define V_CONCURRENT
-
 #ifndef T
 #error Define a type T before including this header
 #endif
@@ -108,6 +104,7 @@ LINKAGE T METHOD(pop)(TYPENAME *self) {
   return v;
 }
 
+#ifndef V_CONCURRENT
 LINKAGE T *METHOD(ref_at)(TYPENAME *self, size_t index) {
   AQUIRE_LOCK(self);
 
@@ -117,6 +114,7 @@ LINKAGE T *METHOD(ref_at)(TYPENAME *self, size_t index) {
   RELEASE_LOCK(self);
   return ref;
 }
+#endif
 
 LINKAGE T METHOD(val_at)(TYPENAME *self, size_t index) {
   AQUIRE_LOCK(self);
@@ -179,3 +177,7 @@ LINKAGE T METHOD(del)(TYPENAME *self, size_t index) {
 #undef METHOD
 #undef CONCAT
 #undef CONCAT_
+#undef INIT_LOCK
+#undef DESTROY_LOCK
+#undef AQUIRE_LOCK
+#undef RELEASE_LOCK
