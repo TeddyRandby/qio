@@ -333,6 +333,7 @@ qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
       .fd = fd,
       .addr = (uintptr_t)buf,
       .len = n,
+      .off = -1,
   });
 }
 
