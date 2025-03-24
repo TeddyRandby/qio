@@ -304,7 +304,7 @@ qd_t qopenat(qfd_t fd, const char *path) {
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
       .addr = (uintptr_t)path,
-      .open_flags = O_RDWR | O_CREAT,
+      .open_flags = O_RDWR | O_CREAT | O_APPEND,
   });
 }
 
@@ -333,7 +333,6 @@ qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
       .fd = fd,
       .addr = (uintptr_t)buf,
       .len = n,
-      .rw_flags = O_APPEND,
   });
 }
 
