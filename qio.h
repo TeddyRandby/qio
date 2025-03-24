@@ -127,8 +127,8 @@ QIO_API int64_t qd_result(qd_t qd) {
 
 static qfd_t ring;
 
-static uint32_t *sring_tail, *sring_head, *sring_mask, *sring_array, *cring_head,
-    *cring_tail, *cring_mask;
+static uint32_t *sring_tail, *sring_head, *sring_mask, *sring_array,
+    *cring_head, *cring_tail, *cring_mask;
 
 static struct io_uring_sqe *sqes;
 static struct io_uring_cqe *cqes;
@@ -333,7 +333,7 @@ qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
       .fd = fd,
       .addr = (uintptr_t)buf,
       .len = n,
-      .off = -1,
+      .rw_flags = O_APPEND,
   });
 }
 
