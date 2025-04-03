@@ -1,5 +1,6 @@
-#include "threads.h"
 #include <stdio.h>
+
+#include "threads.h"
 #include "qio.h"
 
 #define QSIZE 256

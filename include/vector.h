@@ -1,7 +1,7 @@
 #include <assert.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifndef T
 #error Define a type T before including this header
@@ -25,11 +25,15 @@
   ((type *)realloc(loc, sizeof(type) * (new_count)))
 
 #ifdef V_CONCURRENT
+#if __has_include("threads.h")
 #include "threads.h"
 #define INIT_LOCK(self) (mtx_init(&self->mtx, mtx_plain))
 #define DESTROY_LOCK(self) (mtx_destroy(&self->mtx))
 #define AQUIRE_LOCK(self) (mtx_lock(&self->mtx))
 #define RELEASE_LOCK(self) (mtx_unlock(&self->mtx))
+#else
+#error V_CONCURRENT set without threads.h
+#endif
 #else
 #define INIT_LOCK(self)
 #define DESTROY_LOCK(self)
@@ -72,7 +76,8 @@ LINKAGE void METHOD(drain)(TYPENAME *self, TYPENAME *other) {
   INIT_LOCK(other);
   other->cap = self->cap;
   other->len = self->len;
-  other->data = self->data;;
+  other->data = self->data;
+  ;
 
   self->len = 0;
   self->cap = 0;
@@ -129,7 +134,7 @@ LINKAGE T METHOD(pop)(TYPENAME *self) {
 #ifndef V_CONCURRENT
 LINKAGE T *METHOD(ref_at)(TYPENAME *self, size_t index) {
   assert(index < self->len);
-  T * ref =  self->data + index;
+  T *ref = self->data + index;
 
   return ref;
 }
@@ -140,7 +145,7 @@ LINKAGE T *METHOD(emplace)(TYPENAME *self) {
     self->data = GROW(T, self->data, self->cap);
   }
 
-  T* ref =  self->data + (self->len++);
+  T *ref = self->data + (self->len++);
 
   return ref;
 }
