@@ -137,5 +137,9 @@ A windows implementation with IO Completion Ports is planned but not begun.
 Right now, `qopen` and `qopenat` specify `read/write` permissions manually
 on all files they open. This is because I don't want to bother writing up some
 cross-platform flags nonsense at the moment. For now, always opening `r/w` with `create` and `append` on is good enough.
+#### Dependencies:
+There are two header files included in this repo alongside `qio.h`. One is a cross-platform implementation of the c11 threads API. On linux nowadays
+this is unnecessary, as `<threads.h>` likely just comes with your distribution. However other platforms are not up to speed on this optional part of the 
+c-standard, and so `"threads.h"` is provided here if you need it. `"vector.h"` provides a macro-hell generic vector, with some multi-threading capabilities.
 #### TODO:
 The tcp echo-server example is useful for testing, but it would be much better to write a significant test-application which can really push the system.
