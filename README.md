@@ -1,6 +1,7 @@
 ## QIO
 QIO is a cross-platform and header-only library for performing asynchronous IO - without specifying how.
 QIO leaves *you the programmer* responsible for checking on IO operations, and blocking if/when you want.
+This library is meant to be an extremely simple alternative to something like `libuv`.
 The interface is very small:
 ```c
 /*
@@ -10,7 +11,7 @@ The interface is very small:
 typedef /* os_fd_type */ qfd_t;
 
 /*
- * A qd (pronounced 'kid') is a handle representing a single, queued IO operation.
+ * A qd (pronounced 'kid') is a handle representing a single, 'queued' IO operation.
  *
  * It is used to:
  *  - Check on the status of its corresponding operation.
@@ -38,21 +39,42 @@ int8_t  qd_status(qd_t qd);
 int64_t qd_result(qd_t qd);
 
 /*
+ * This operation is *blocking*. It blocks until the operation is complete - 
+ * and then reclaims the memory of `qd` for future operations.
+ * 
+ *  NOTE:
+ *      Currently, there is a 'free list' protected by a mutex.
+ *      This allows multiple threads to queue and destroy
+ *      operations in parallel.
+ *
+ *      This does mean there will probably be a lot of contention
+ *      on this one lock. It may be possible to implement this more
+ *      efficiently with a single atomic qd_t as the head of the list.
+ */
+void qd_destroy(qd_t qd);
+
+/*
  * %-----------%
  * | QIO Setup |
  * %-----------%
  */
 
 /*
- * Initialize QIO. This should only be called *once* per thread.
- * This sets up platform-specific IO datastructures. (Like the queues in io_uring).
+ * Initialize QIO. This should only be called *once*.
+ * This sets up platform-specific IO datastructures, as well as performing
+ * any other initialization necessary.
  */
-void qio_init(uint64_t size);
+int32_t qio_init(uint64_t size);
 
 /*
- * De-initialize QIO. This should only be called *once* per thread.
+ * Run the event loop.
+ */
+int32_t qio_loop();
+
+/*
+ * De-initialize QIO. This should only be called *once*.
  *
- * This destroys the platform-specific IO datastructures setup by qio_init.
+ * In theory, this destroys the platform-specific IO datastructures setup by qio_init.
  * 
  * Currently this just leaks all memory. Who cares? This stuff lives the whole
  * lifetime of the thread its on anyway.
@@ -79,7 +101,19 @@ qd_t qclose(qfd_t fd);
 
 qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
+
+/* %-------------%
+ * | Coming Soon |
+ * %-------------%
+ *
+ * qlisten
+ * qbind
+ * qmkdir 
+ * qmkdirat
+ */
 ```
+## Examples
+For usage exapmles, it is best to check the `examples/` directory.
 ### Peculiar usage notes
 To simplify the interface, `qio` uses some top-level `static` variables.
 This can be confusing and seem contradictory to QIO's header-only nature. And if you notice,
@@ -89,21 +123,19 @@ and only *defined* once (via the aforementioned macro guards), QIO is designed t
 The distinction here is to encourage the programmer to wrap qio's api with their own app-specific functionality.
 This functionality is then compiled as one translation unit and linked where needed in the larger application.
 ### LINUX
-The linux implementation uses `io_uring`. Currently, each queued command still requires a system call to `io_uring_enter` to notify
-the kernel that an submission entry has been queued.
-TODO:
-- Batch operations which occur near each other in time. This can be done by pushing them into a local buffer, and then flushing
-the whole buffer out at once via `io_uring_enter` in `qio_loop`.
-- Memory usage is dumb. Operations are never *reused* or freed. (Slots in the internal queue are never reclaimed)
-    - Maybe a linked-list(ish) of indexes in the vector can replace this.
+The linux implementation uses `io_uring`. IO operations are buffered into a thread-safe queue, and `qio_loop` batches requests from this queue to the kernel.
 ### Macos
-A macos implementation with kqueue is planned but not begun.
+The darwin implementation uses `kqueue`. IO operations are buffered into a thread-safe queue. `qio_loop` processes the queue. Some operations *do not require polling*, such as `open`.
+These operations are performed by `qio_loop` when it comes across them. For reads/writes which do require polling, `qio_loop` batches out events to the kernel, and then tries to perform
+non-blocking reads/writes for the descriptors which received events. If these operations fail with E_AGAIN or E_WOULDBLOCK, they are placed onto the queue again to try later.
+#### Note:
+As this implementation requires all IO operations to be non-blocking, `stdio` and the like need to be modified with `fcntl` to include `O_NONBLOCK`. This can be taken care of in `qio_init`
+but isn't done yet.
 ### Windows
 A windows implementation with IO Completion Ports is planned but not begun.
 #### A note on qopen
 Right now, `qopen` and `qopenat` specify `read/write` permissions manually
 on all files they open. This is because I don't want to bother writing up some
-cross-platform flags nonsense at the moment. For now, always opening `r/w` is good enough.
+cross-platform flags nonsense at the moment. For now, always opening `r/w` with `create` and `append` on is good enough.
 #### TODO:
-- An actual thread-safe implementation of `v_qd`. The current setup is fine for
-applications queueing from only one thread, but wont scale beyond that.
+The tcp echo-server example is useful for testing, but it would be much better to write a significant test-application which can really push the system.

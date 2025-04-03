@@ -1,7 +1,6 @@
 #include "../qio.h"
 
 #include <stdio.h>
-#include <threads.h>
 
 #define QSIZE 256
 
@@ -13,7 +12,8 @@ const int server_port = 8077;
 #include <unistd.h>
 
 /*
- * A typical IO loop for qio. Uses a bool* to notify parent thread when qio initialization is complete.
+ * A typical IO loop for qio. Uses a bool* to notify parent thread when qio
+ * initialization is complete.
  */
 int io_loop(void *initialized) {
   if (qio_init(QSIZE) < 0)
@@ -84,11 +84,12 @@ int main() {
 
   while (true) {
     /*
-     * The logic here is to loop through all our possible clients in a sort of state machine.
-     * No iteration of this loop will block - all of the IO functions are *queued*.
+     * The logic here is to loop through all our possible clients in a sort of
+     * state machine. No iteration of this loop will block - all of the IO
+     * functions are *queued*.
      *
-     * The status is checked before calling qd_result on any given operation, so we can be sure
-     * these calls won't block as well.
+     * The status is checked before calling qd_result on any given operation, so
+     * we can be sure these calls won't block as well.
      */
     for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
       // This client slot has no connected client. Queue an accept.
@@ -118,6 +119,7 @@ int main() {
                  inet_ntoa(client_address.sin_addr));
 
           // Clear the accept qid.
+          qd_destroy(queued_accept);
           accepts[i] = -1;
           continue;
         }
@@ -146,12 +148,12 @@ int main() {
         /*printf("[INFO]: Checking queued recv %li\n", queued_recv);*/
         if (qd_status(queued_recv)) {
           int64_t n = qd_result(queued_recv);
-          printf("[INFO]: Queued recv %li is done: %li.\n", queued_recv, n);
+          printf("[INFO %i]: Queued recv %li is done: %li.\n", i, queued_recv, n);
 
           // Client has requested a shut down.
           if (n == 0) {
             printf("[INFO]: Shutdown requested for %i.\n", i);
-            qclose(client);
+            qd_destroy(qclose(client));
             clients[i] = -1;
             continue;
           }
@@ -180,9 +182,11 @@ int main() {
           if (n < 0)
             return printf("[ERROR] Client send failed\n"), 1;
 
-          printf("[INFO] Sent %li bytes to client %i\n", n, i);
+          printf("[INFO]: Sent %li bytes to client %i\n", n, i);
 
           // This client is ready for a new recv/send cycle.
+          qd_destroy(sends[i]);
+          qd_destroy(recvs[i]);
           sends[i] = -1;
           recvs[i] = -1;
           continue;

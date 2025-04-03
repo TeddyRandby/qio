@@ -25,7 +25,7 @@
   ((type *)realloc(loc, sizeof(type) * (new_count)))
 
 #ifdef V_CONCURRENT
-#include <threads.h>
+#include "threads.h"
 #define INIT_LOCK(self) (mtx_init(&self->mtx, mtx_plain))
 #define DESTROY_LOCK(self) (mtx_destroy(&self->mtx))
 #define AQUIRE_LOCK(self) (mtx_lock(&self->mtx))
@@ -55,11 +55,30 @@ LINKAGE void METHOD(create)(TYPENAME *self, uint64_t cap) {
 }
 
 LINKAGE void METHOD(copy)(TYPENAME *self, TYPENAME *other) {
+  AQUIRE_LOCK(self);
+
   self->cap = other->cap;
   self->len = other->len;
   self->data = malloc(sizeof(T) * other->cap);
   memcpy(self->data, other->data, other->len * sizeof(T));
-  INIT_LOCK(self);
+  INIT_LOCK(other);
+
+  RELEASE_LOCK(self);
+}
+
+LINKAGE void METHOD(drain)(TYPENAME *self, TYPENAME *other) {
+  AQUIRE_LOCK(self);
+
+  INIT_LOCK(other);
+  other->cap = self->cap;
+  other->len = self->len;
+  other->data = self->data;;
+
+  self->len = 0;
+  self->cap = 0;
+  self->data = nullptr;
+
+  RELEASE_LOCK(self);
 }
 
 LINKAGE void METHOD(destroy)(TYPENAME *self) {
@@ -109,12 +128,20 @@ LINKAGE T METHOD(pop)(TYPENAME *self) {
 
 #ifndef V_CONCURRENT
 LINKAGE T *METHOD(ref_at)(TYPENAME *self, size_t index) {
-  AQUIRE_LOCK(self);
-
   assert(index < self->len);
   T * ref =  self->data + index;
 
-  RELEASE_LOCK(self);
+  return ref;
+}
+
+LINKAGE T *METHOD(emplace)(TYPENAME *self) {
+  if (self->len >= self->cap) {
+    self->cap = MAX(8, self->cap * 2);
+    self->data = GROW(T, self->data, self->cap);
+  }
+
+  T* ref =  self->data + (self->len++);
+
   return ref;
 }
 #endif
@@ -141,26 +168,15 @@ LINKAGE void METHOD(cap)(TYPENAME *self, size_t cap) {
   RELEASE_LOCK(self);
 }
 
-LINKAGE T *METHOD(emplace)(TYPENAME *self) {
-  AQUIRE_LOCK(self);
-
-  if (self->len >= self->cap) {
-    self->cap = MAX(8, self->cap * 2);
-    self->data = GROW(T, self->data, self->cap);
-  }
-
-  T* ref =  self->data + (self->len++);
-
-  RELEASE_LOCK(self);
-  return ref;
-}
-
 LINKAGE T METHOD(del)(TYPENAME *self, size_t index) {
+  assert(index < self->len);
+
   AQUIRE_LOCK(self);
 
-  assert(index < self->len);
   if (index + 1 == self->len) {
-    return METHOD(pop)(self);
+    T v = self->data[--self->len];
+    RELEASE_LOCK(self);
+    return v;
   }
 
   T removed = METHOD(val_at)(self, index);

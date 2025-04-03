@@ -1,7 +1,5 @@
 #include "qio.h"
-
 #include <stdio.h>
-#include <threads.h>
 
 #define QSIZE 256
 
@@ -40,7 +38,7 @@ int main() {
   qd_t qids[NQIDS];
 
   for (int i = 0; i < NQIDS; i++) {
-    qids[i] = qread(fd, sizeof(buf), buf);
+    qids[i] = qread(fd, 0, sizeof(buf), buf);
     printf("[QID %li] Queued read of %lu.\n", qids[i], sizeof(buf));
   }
 

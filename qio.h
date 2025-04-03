@@ -1,6 +1,7 @@
 #ifndef QIO_H
 #define QIO_H
 
+#include <assert.h>
 #include <stdint.h>
 
 #define QIO_API static inline
@@ -22,8 +23,10 @@ typedef int qfd_t;
 
 #elifdef QIO_MACOS
 
+#include <fcntl.h>
+#include <sys/event.h>
+#include <sys/socket.h>
 #include <unistd.h>
-/* Implemented using kqueue */
 
 typedef int qfd_t;
 
@@ -74,9 +77,16 @@ QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 struct qio_op_t {
+  /* Has the io op completed? */
   int8_t done;
-  int32_t result;
-  uint32_t flags;
+  /* OS return values */
+  int64_t result;
+  uint64_t flags;
+  /* User Data */
+  union {
+    uint64_t ud;
+    qd_t next_free;
+  };
 };
 
 #define T struct qio_op_t
@@ -84,15 +94,17 @@ struct qio_op_t {
 #define V_CONCURRENT
 #include "vector.h"
 
+mtx_t freelist_mtx;
+
 /*
  * The following variable (and other platform-specific globals like it)
  * are marked static, and not _Thread_local. This is intentional -
  * it is almost *always* the case that IO operations qre queued from
  * a different thread than the one running the qio_loop. Because of this,
  * these data structures need to be thread-safe and static.
- * TODO: FIXME: Make this data-structure thread-safe.
  */
-static v_qd qds;
+static v_qd qds = {0};
+static uint64_t qd_free = -1;
 
 /*
  * This function is *not* blocking. It will immediately return:
@@ -116,6 +128,92 @@ QIO_API int64_t qd_result(qd_t qd) {
     ;
 
   return v_qd_val_at(&qds, qd).result;
+}
+
+QIO_API void qd_setud(qd_t qd, uint64_t ud) {
+  assert(qd < qds.len);
+
+  struct qio_op_t v = v_qd_val_at(&qds, qd);
+
+  v.ud = ud;
+
+  v_qd_set(&qds, qd, v);
+}
+
+QIO_API uint64_t qd_getud(qd_t qd, uint64_t ud) {
+  assert(qd < qds.len);
+  return v_qd_val_at(&qds, qd).ud;
+}
+
+static uint64_t negative_one = -1;
+static struct qio_op_t destroyed = {.next_free = (uint64_t)-1};
+
+/* the O(n) operation, appending to list */
+static inline void _freelist_push(qd_t qd) {
+  assert(qd_free != negative_one);
+
+  struct qio_op_t op = v_qd_val_at(&qds, qd_free);
+  qd_t p_qd = qd_free;
+
+  while (op.next_free != negative_one) {
+    p_qd = op.next_free;
+    op = v_qd_val_at(&qds, op.next_free);
+  }
+
+  assert(op.next_free == negative_one);
+  assert(p_qd != negative_one);
+  assert(p_qd < qds.len);
+
+  op.next_free = qd;
+  v_qd_set(&qds, p_qd, op);
+}
+
+/* The O(1) operation, popping from list */
+static inline qd_t _freelist_pop() {
+  assert(qd_free != negative_one);
+
+  qd_t qd = qd_free;
+
+  struct qio_op_t op = v_qd_val_at(&qds, qd_free);
+  qd_free = op.next_free;
+
+  return qd;
+}
+
+QIO_API void qd_destroy(qd_t qd) {
+  assert(qd < qds.len);
+
+  /* Block until the operation is done. */
+  qd_result(qd);
+
+  assert(v_qd_val_at(&qds, qd).done);
+
+  mtx_lock(&freelist_mtx);
+
+  v_qd_set(&qds, qd, destroyed);
+
+  if (qd_free == negative_one)
+    return qd_free = qd, (void)mtx_unlock(&freelist_mtx);
+
+  _freelist_push(qd);
+
+  mtx_unlock(&freelist_mtx);
+}
+
+QIO_API qd_t qd_next() {
+  mtx_lock(&freelist_mtx);
+
+  if (qd_free != negative_one) {
+    qd_t qd = _freelist_pop();
+
+    if (qd != negative_one)
+      return mtx_unlock(&freelist_mtx), qd;
+  }
+
+  qd_t qd = v_qd_push(&qds, (struct qio_op_t){});
+  assert(qds.len > 0);
+
+  return mtx_unlock(&freelist_mtx), qd;
 }
 
 #ifdef QIO_LINUX
@@ -155,21 +253,27 @@ int io_uring_enter(unsigned int fd, unsigned int to_submit,
 
 QIO_API int32_t qio_loop() {
   while (true) {
-    int buffered_sqes = queued_sqes.len;
-    assert(buffered_sqes < ring_entries);
     /*
-     * Issues, as sqe's can be added *during* this loop.
+     * Atomically drain all our queued sqes into a local buffer.
      */
-    for (int i = 0; i < buffered_sqes; i++) {
-      struct io_uring_sqe src_sqe = v_sqe_pop(&queued_sqes);
+    v_sqe buffered;
+    v_sqe_drain(&queued_sqes, &buffered);
+
+    // Rudimentary assert here.
+    // It would be better to just put everything we can in ring,
+    // and re-queue the rest.
+    assert(buffered.len < ring_entries);
+
+    for (int i = 0; i < buffered.len; i++) {
+      struct io_uring_sqe *src_sqe = &buffered.data[i];
 
       unsigned index, tail;
       tail = *sring_tail;
       index = tail & *sring_mask;
 
-      assert(src_sqe.user_data < qds.len);
+      assert(src_sqe->user_data < qds.len);
       struct io_uring_sqe *dst_sqe = &sqes[index];
-      memcpy(dst_sqe, &src_sqe, sizeof(struct io_uring_sqe));
+      memcpy(dst_sqe, src_sqe, sizeof(struct io_uring_sqe));
 
       sring_array[index] = index;
       tail++;
@@ -179,8 +283,11 @@ QIO_API int32_t qio_loop() {
     }
 
     /* System call to trigger kernel */
-    if (buffered_sqes)
-      io_uring_enter(ring, buffered_sqes, 0, 0, nullptr);
+    if (buffered.len)
+      io_uring_enter(ring, buffered.len, 0, 0, nullptr);
+
+    /* Free our buffered list */
+    v_sqe_destroy(&buffered);
 
     struct io_uring_cqe *cqe;
     unsigned head;
@@ -231,6 +338,7 @@ QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
   ring_entries = size;
   v_qd_create(&qds, 64);
+  mtx_init(&freelist_mtx, mtx_plain);
 
   struct io_uring_params p = {0};
   /* The submission and completion queue */
@@ -288,7 +396,7 @@ QIO_API int32_t qio_init(uint64_t size) {
 }
 
 qd_t append_sqe(struct io_uring_sqe *src_sqe) {
-  qd_t qid = v_qd_push(&qds, (struct qio_op_t){});
+  qd_t qid = qd_next();
   assert(qds.len > 0);
 
   src_sqe->user_data = qid;
@@ -389,6 +497,440 @@ QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
       .off = addrlen,
   });
 }
+
+#elifdef QIO_MACOS
+
+/*
+ * This impl needs a lot of work - it isn't functional.
+ * kqueue doesn't perform any operations - it just waits on events.
+ *
+ * This implementation needs to actually *perform*
+ * reads, writes, accepts, sends, recvs, and the like.
+ *
+ * Maybe the best thing to do is to store this data in the kevent buffer.
+ *
+ * During QIO loop, we try and perform IO on for all events that we
+ * received as ready. If we receive EAGAIN, we queue it again
+ * to try later.
+ *
+ * This leaves all IO going through a single thread, and allows us
+ * to make synthetic async events for operations that will just
+ * wrap blocking syscalls (open, openat, socket, listen)
+ */
+
+qfd_t queue;
+_Atomic int64_t waiting = 0;
+
+struct qio_kevent {
+  struct kevent ke;
+
+  enum {
+    QIO_KQ_OPENAT,
+    QIO_KQ_READ,
+    QIO_KQ_WRITE,
+    QIO_KQ_SOCKET,
+    QIO_KQ_ACCEPT,
+    QIO_KQ_CONNECT,
+    QIO_KQ_CLOSE,
+    QIO_KQ_SEND,
+    QIO_KQ_RECV,
+  } op;
+
+  union {
+    struct {
+      const char *path;
+    } openat;
+
+    struct {
+      int64_t off;
+      uint64_t n;
+      uint8_t *buf;
+    } read;
+
+    struct {
+      uint64_t n;
+      uint8_t *buf;
+    } write;
+
+    struct {
+      int32_t domain, protocol, type;
+    } socket;
+
+    struct {
+      void *addr, *addrlen;
+      uint32_t flags;
+    } accept;
+
+    struct {
+      void *addr;
+      uint64_t addrlen;
+    } connect;
+
+    struct {
+    } close;
+
+    struct {
+      uint64_t n;
+      uint8_t *buf;
+    } send;
+
+    struct {
+      uint64_t n;
+      uint8_t *buf;
+    } recv;
+  };
+};
+
+#define T struct qio_kevent
+#define NAME kevent
+#define V_CONCURRENT
+#include "vector.h"
+
+v_kevent pending_ops;
+
+QIO_API void qio_destroy() {}
+
+QIO_API int32_t qio_init(uint64_t size) {
+  v_kevent_create(&pending_ops, 64);
+
+  queue = kqueue();
+
+  if (queue < 0)
+    return queue;
+
+  return -1;
+}
+
+/**
+ * Finish the qd stored in ke->ke.udata with res and flags;
+ */
+void resolve_qio_kevent(struct qio_kevent *ke, int64_t res, int64_t flags) {
+  qd_t qd = (uintptr_t)ke->ke.udata;
+  struct qio_op_t op = v_qd_val_at(&qds, qd);
+
+  op.result = res;
+  op.flags = flags;
+  op.done = true;
+
+  v_qd_set(&qds, qd, op);
+}
+
+void resolve_polled(struct kevent *events, int nevents) {
+  v_kevent pending;
+
+  // Drain the pending ops into our local vector.
+  // This atomically empties the pending_ops vector,
+  // Allowing other threads to queue more pending operations
+  // while this vector is processed.
+  v_kevent_drain(&pending_ops, &pending);
+
+  for (int j = 0; j < pending.len; j++) {
+    struct qio_kevent *qioke = &pending.data[j];
+    qd_t qd = (uintptr_t)qioke->ke.udata;
+
+    ssize_t result;
+
+    /* Search for a matching event amongst our given events */
+    // FIXME: O(n) search here no good.
+    for (int i = 0; i < nevents; i++) {
+      struct kevent *ke = &events[i];
+      if (qioke->ke.udata == ke->udata) {
+        /*
+         * If this event resulted in an error,
+         * resolve the operation with said error.
+         */
+        if (ke->flags & EV_ERROR) {
+          result = -ke->data;
+          goto ev_err;
+        }
+
+        /*
+         * In this case we have no error, and our event has arrived
+         * for our FD. We try to do our non-blocking
+         * read/write/send/recv/accept now.
+         */
+        switch (qioke->op) {
+        case QIO_KQ_READ: {
+          result = pread(qioke->ke.ident, qioke->read.buf, qioke->read.n,
+                         qioke->read.off);
+          goto next;
+        }
+        case QIO_KQ_WRITE: {
+          result =
+              pwrite(qioke->ke.ident, qioke->write.buf, qioke->write.n, -1);
+          goto next;
+        }
+        case QIO_KQ_ACCEPT: {
+          result = accept(qioke->ke.ident, qioke->accept.addr,
+                          qioke->accept.addrlen);
+          goto next;
+        }
+        case QIO_KQ_SEND: {
+          result = send(qioke->ke.ident, qioke->send.buf, qioke->send.n, 0);
+          goto next;
+        }
+        case QIO_KQ_RECV: {
+          result = recv(qioke->ke.ident, qioke->recv.buf, qioke->recv.n, 0);
+          goto next;
+        }
+        default:
+          assert(false && "Matched Kevent for invalid operation");
+          return;
+        }
+      }
+    }
+
+    /* Our pending operation found no matching event. */
+    /* Re-queue it into the pending_ops vector. */
+    v_kevent_push(&pending_ops, *qioke);
+    continue;
+
+  next:
+    /* We ran our operation. Re-queue if necessary. */
+    if (result == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // re-enqueue pending event, as the operation would have blocked here.
+        v_kevent_push(&pending_ops, *qioke);
+      } else {
+        resolve_qio_kevent(qioke, -errno, 0);
+      }
+    } else {
+      resolve_qio_kevent(qioke, result, 0);
+    }
+  ev_err:
+    /* Our event failed for some reason. Bubble up the error */
+    resolve_qio_kevent(qioke, result, 0);
+  }
+
+  v_kevent_destroy(&pending);
+}
+
+/**
+ * Flush up to nevents from the pending operation vector.
+ *
+ * Some operations can be immediately processed here:
+ *  - OPENAT
+ *  - SOCKET
+ *  - CONNECT
+ *  - CLOSE
+ *
+ * Other operations need to wait for an FD to be readable or writable.
+ * In this case, we queue a kevent.
+ *
+ * These events will be processed by a sister function. If an event
+ * is successful, we try to complete the operation.
+ *
+ * */
+int flush_pending(struct kevent *events, int nevents) {
+  v_kevent pending;
+
+  // Drain the pending ops into our local vector.
+  // This atomically empties the pending_ops vector,
+  // Allowing other threads to queue more pending operations
+  // while this vector is processed.
+  v_kevent_drain(&pending_ops, &pending);
+
+  size_t new_events = 0;
+
+  for (size_t i = 0; i < pending.len; i++) {
+    // We can safely index data here, as no other code or thread
+    // has access to this pending vector.
+    struct qio_kevent *ke = &pending.data[i];
+
+    switch (ke->op) {
+    case QIO_KQ_OPENAT: {
+      // Perform the `openat` syscall.
+      int fd = openat(ke->ke.ident, ke->openat.path,
+                      O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK);
+
+      resolve_qio_kevent(ke, fd, 0);
+      continue;
+    }
+    case QIO_KQ_SOCKET: {
+      // Perform the `socket` syscall.
+      int fd = socket(ke->socket.domain, ke->socket.type, ke->socket.protocol);
+      if (fd < 0) {
+        resolve_qio_kevent(ke, fd, 0);
+        continue;
+      }
+
+      int res = fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | O_NONBLOCK);
+      if (res < 0) {
+        resolve_qio_kevent(ke, res, 0);
+        continue;
+      }
+
+      resolve_qio_kevent(ke, fd, 0);
+      continue;
+    }
+    case QIO_KQ_CONNECT: {
+      int res = connect(ke->ke.ident, ke->connect.addr, ke->connect.addrlen);
+      resolve_qio_kevent(ke, res, 0);
+      continue;
+    }
+    case QIO_KQ_CLOSE: {
+      int res = close(ke->ke.ident);
+      resolve_qio_kevent(ke, res, 0);
+      continue;
+    }
+    case QIO_KQ_SEND:
+    case QIO_KQ_RECV:
+    case QIO_KQ_ACCEPT:
+    case QIO_KQ_WRITE:
+    case QIO_KQ_READ: {
+      assert(new_events < nevents);
+      if (new_events >= nevents)
+        continue;
+
+      // Copy the event into this iterations list.
+      memcpy(events + new_events++, &ke->ke, sizeof(struct kevent));
+      v_kevent_push(&pending_ops, *ke);
+      continue;
+    }
+    }
+  }
+
+  v_kevent_destroy(&pending);
+  return new_events;
+};
+
+qd_t append_kevent(struct qio_kevent *src_kevent) {
+  qd_t qid = qd_next();
+  assert(qds.len > 0);
+
+  src_kevent->ke.udata = (void *)(intptr_t)qid;
+  v_kevent_push(&pending_ops, *src_kevent);
+
+  return qid;
+}
+
+QIO_API int32_t qio_loop() {
+  while (true) {
+    struct timespec t = {0};
+
+    struct kevent events[256];
+    size_t total_events = sizeof(events) / sizeof(struct kevent);
+
+    int nevents = flush_pending(events, total_events);
+
+    // Poll each of these one-shot events.
+    nevents = kevent(queue, events, nevents, events, total_events, &t);
+
+    assert(nevents >= 0);
+    if (nevents < 0)
+      return nevents;
+
+    resolve_polled(events, nevents);
+  }
+}
+
+QIO_API qd_t qopen(const char *path) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_OPENAT,
+
+      .ke.ident = AT_FDCWD,
+
+      .openat.path = path,
+  });
+}
+
+QIO_API qd_t qopenat(qfd_t fd, const char *path) { return -1; };
+
+QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_READ,
+
+      .ke.ident = fd,
+      .ke.flags = EV_ADD | EV_ONESHOT,
+      .ke.filter = EVFILT_READ,
+
+      .read.off = off,
+      .read.n = n,
+      .read.buf = buf,
+  });
+};
+
+QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_WRITE,
+
+      .ke.ident = fd,
+      .ke.flags = EV_ADD | EV_ONESHOT,
+      .ke.filter = EVFILT_WRITE,
+
+      .write.n = n,
+      .write.buf = buf,
+  });
+};
+
+QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_ACCEPT,
+
+      .ke.ident = fd,
+      .ke.flags = EV_ADD | EV_ONESHOT,
+      .ke.filter = EVFILT_READ,
+
+      .accept.addr = addr,
+      .accept.addrlen = addrlen,
+      .accept.flags = flags,
+  });
+}
+
+QIO_API qd_t qsocket(int domain, int protocol, int type) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_SOCKET,
+
+      .socket.domain = domain,
+      .socket.protocol = protocol,
+      .socket.type = type,
+  });
+};
+
+QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_CONNECT,
+
+      .ke.ident = fd,
+
+      .connect.addr = addr,
+      .connect.addrlen = addrlen,
+  });
+};
+
+QIO_API qd_t qclose(qfd_t fd) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_CLOSE,
+
+      .ke.ident = fd,
+  });
+};
+
+QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_SEND,
+
+      .ke.ident = fd,
+      .ke.flags = EV_ADD | EV_ONESHOT,
+      .ke.filter = EVFILT_WRITE,
+
+      .send.n = n,
+      .send.buf = buf,
+  });
+};
+
+QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_RECV,
+
+      .ke.ident = fd,
+      .ke.flags = EV_ADD | EV_ONESHOT,
+      .ke.filter = EVFILT_READ,
+
+      .recv.n = n,
+      .recv.buf = buf,
+  });
+};
 
 #endif
 #endif
