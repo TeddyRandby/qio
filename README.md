@@ -122,6 +122,22 @@ Unlike other header-only libraries which are designed to be included multiple ti
 and only *defined* once (via the aforementioned macro guards), QIO is designed to only be *included* once.
 The distinction here is to encourage the programmer to wrap qio's api with their own app-specific functionality.
 This functionality is then compiled as one translation unit and linked where needed in the larger application.
+
+Additionally, QIO does not try to detect the OS on its own. When building qio, it is important to define a macro
+telling QIO which platform implementation to use. The options are:
+- QIO_LINUX
+- QIO_MACOS
+- QIO_WINDOWS
+If building for a single platform, it is sufficient to do the following:
+```c
+#define QIO_LINUX
+#include "qio.h"
+
+int main() {
+    // ... application code ...
+}
+```
+When building for multiple platforms, define the appropriate macro for each platform's build.
 ### LINUX
 The linux implementation uses `io_uring`. IO operations are buffered into a thread-safe queue, and `qio_loop` batches requests from this queue to the kernel.
 ### Macos
