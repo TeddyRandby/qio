@@ -68,7 +68,7 @@ QIO_API qd_t qopenat(qfd_t fd, const char *path);
 QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
-QIO_API qd_t qsocket(int domain, int protocol, int type);
+QIO_API qd_t qsocket(int domain, int type, int protocol);
 QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags);
 QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
 QIO_API qd_t qclose(qfd_t fd);
@@ -598,7 +598,7 @@ QIO_API int32_t qio_init(uint64_t size) {
   if (queue < 0)
     return queue;
 
-  return -1;
+  return 0;
 }
 
 /**
@@ -877,7 +877,7 @@ QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
   });
 }
 
-QIO_API qd_t qsocket(int domain, int protocol, int type) {
+QIO_API qd_t qsocket(int domain, int type, int protocol) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SOCKET,
 

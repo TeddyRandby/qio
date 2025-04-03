@@ -150,11 +150,16 @@ int main() {
           int64_t n = qd_result(queued_recv);
           printf("[INFO %i]: Queued recv %li is done: %li.\n", i, queued_recv, n);
 
-          // Client has requested a shut down.
+          // Client has requested a shutdown.
           if (n == 0) {
             printf("[INFO]: Shutdown requested for %i.\n", i);
+            // Synchronous close is fine here.
             qd_destroy(qclose(client));
+            qd_destroy(queued_recv);
+
             clients[i] = -1;
+            recvs[i] = -1;
+
             continue;
           }
 
