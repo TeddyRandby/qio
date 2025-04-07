@@ -98,6 +98,7 @@ qd_t qsocket(int domain, int type, int protocol);
 qd_t qaccept(qfd_t fd, void* addr, void* addrlen, uint32_t flags);
 qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
 qd_t qclose(qfd_t fd);
+qd_t qshutdown(qfd_t fd, int32_t how);
 
 qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
