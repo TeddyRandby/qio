@@ -262,7 +262,11 @@ QIO_API int32_t qio_loop() {
   struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
 
   while (true) {
-    thrd_sleep(&interval, nullptr);
+    if (!queued_sqes.len) {
+      thrd_sleep(&interval, nullptr);
+      continue;
+    }
+
     /*
      * Atomically drain all our queued sqes into a local buffer.
      */
@@ -873,7 +877,10 @@ QIO_API int32_t qio_loop() {
   struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
 
   while (true) {
-    thrd_sleep(&interval, nullptr);
+    if (!pending_ops.len) {
+      thrd_sleep(&interval, nullptr);
+      continue;
+    }
 
     struct timespec t = {0};
 
