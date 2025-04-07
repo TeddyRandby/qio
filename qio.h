@@ -76,7 +76,7 @@ QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags);
 QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen);
 QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
 QIO_API qd_t qclose(qfd_t fd);
-QIO_API qd_t qshutdown(qfd_t fd);
+QIO_API qd_t qshutdown(qfd_t fd, int32_t how);
 
 QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
@@ -493,7 +493,7 @@ QIO_API qd_t qclose(qfd_t fd) {
   });
 }
 
-QIO_API qd_t qshutdown(qfd_t fd) {
+QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SHUTDOWN,
       .fd = fd,
@@ -982,11 +982,13 @@ QIO_API qd_t qclose(qfd_t fd) {
   });
 };
 
-QIO_API qd_t qshutdown(qfd_t fd) {
+QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SHUTDOWN,
 
       .ke.ident = fd,
+      
+      .shutdown.how = how,
   });
 }
 
