@@ -262,87 +262,92 @@ QIO_API int32_t qio_loop() {
   struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
 
   while (true) {
-    if (!queued_sqes.len) {
+    /* Read barrier */
+    unsigned head = io_uring_smp_load_acquire(cring_head);
+
+    /*
+     * If we don't have any ops to queue and the receive buffer is empty:
+     * Sleep and try again later.
+     */
+    if (!queued_sqes.len && head == *cring_tail) {
       thrd_sleep(&interval, nullptr);
       continue;
     }
 
     /*
-     * Atomically drain all our queued sqes into a local buffer.
+     * If we have opts to queue
      */
-    v_sqe buffered;
-    v_sqe_drain(&queued_sqes, &buffered);
+    if (queued_sqes.len) {
+      /*
+       * Atomically drain all our queued sqes into a local buffer.
+       */
+      v_sqe buffered;
+      v_sqe_drain(&queued_sqes, &buffered);
 
-    // Rudimentary assert here.
-    // It would be better to just put everything we can in ring,
-    // and re-queue the rest.
-    assert(buffered.len < ring_entries);
+      // Rudimentary assert here.
+      // It would be better to just put everything we can in ring,
+      // and re-queue the rest.
+      assert(buffered.len < ring_entries);
 
-    for (int i = 0; i < buffered.len; i++) {
-      struct io_uring_sqe *src_sqe = &buffered.data[i];
+      for (int i = 0; i < buffered.len; i++) {
+        struct io_uring_sqe *src_sqe = &buffered.data[i];
 
-      unsigned index, tail;
-      tail = *sring_tail;
-      index = tail & *sring_mask;
+        unsigned index, tail;
+        tail = *sring_tail;
+        index = tail & *sring_mask;
 
-      assert(src_sqe->user_data < qds.len);
-      struct io_uring_sqe *dst_sqe = &sqes[index];
-      memcpy(dst_sqe, src_sqe, sizeof(struct io_uring_sqe));
+        assert(src_sqe->user_data < qds.len);
+        struct io_uring_sqe *dst_sqe = &sqes[index];
+        memcpy(dst_sqe, src_sqe, sizeof(struct io_uring_sqe));
 
-      sring_array[index] = index;
-      tail++;
+        sring_array[index] = index;
+        tail++;
 
-      /* Update the tail */
-      io_uring_smp_store_release(sring_tail, tail);
+        /* Update the tail */
+        io_uring_smp_store_release(sring_tail, tail);
+      }
+
+      /* System call to trigger kernel */
+      if (buffered.len)
+        io_uring_enter(ring, buffered.len, 0, 0, nullptr);
+
+      /* Free our buffered list */
+      v_sqe_destroy(&buffered);
     }
 
-    /* System call to trigger kernel */
-    if (buffered.len)
-      io_uring_enter(ring, buffered.len, 0, 0, nullptr);
-
-    /* Free our buffered list */
-    v_sqe_destroy(&buffered);
-
-    struct io_uring_cqe *cqe;
-    unsigned head;
-
-    /* Read barrier */
-    head = io_uring_smp_load_acquire(cring_head);
-
-    /* If head == tail, buffer is empty */
-    if (head == *cring_tail)
-      continue;
-
-    /* Get the entry */
-    unsigned index = head & (*cring_mask);
-    cqe = &cqes[index];
-    head++;
-
-    qd_t qid = cqe->user_data;
-
-    assert(qid < qds.len);
-    assert(v_qd_val_at(&qds, qid).done == false);
-    assert(v_qd_val_at(&qds, qid).flags == 0);
-    assert(v_qd_val_at(&qds, qid).result == 0);
     /*
-     * Perform this via a set for two resons:
-     *  - The struct is small enough that passying and copying by value is fine
-     *  - This performes the update in *one atomic operation*. Holding pointers
-     *    into the vector is *unsafe* in a concurrent vector, as the array could
-     *    be reallocated out from underneath you.
+     * If we have ops completed
      */
-    v_qd_set(&qds, qid,
-             (struct qio_op_t){
-                 .result = cqe->res,
-                 .flags = cqe->flags,
-                 .done = true,
-             });
-    assert(v_qd_val_at(&qds, qid).done == true);
-    assert(v_qd_val_at(&qds, qid).flags == cqe->flags);
-    assert(v_qd_val_at(&qds, qid).result == cqe->res);
+    if (head != *cring_tail) {
+      /* Get the entry */
+      unsigned index = head & (*cring_mask);
+      struct io_uring_cqe *cqe = &cqes[index];
+      head++;
 
-    /* Write barrier so that update to the head are made visible */
-    io_uring_smp_store_release(cring_head, head);
+      qd_t qid = cqe->user_data;
+
+      assert(qid < qds.len);
+      assert(v_qd_val_at(&qds, qid).done == false);
+      assert(v_qd_val_at(&qds, qid).flags == 0);
+      assert(v_qd_val_at(&qds, qid).result == 0);
+      /*
+       * Perform this via a set for two resons:
+       *  - The struct is small enough that passying and copying by value is
+       * fine
+       *  - This performes the update in *one atomic operation*. Holding
+       * pointers into the vector is *unsafe* in a concurrent vector, as the
+       * array could be reallocated out from underneath you.
+       */
+      v_qd_set(&qds, qid,
+               (struct qio_op_t){
+                   .result = cqe->res,
+                   .flags = cqe->flags,
+                   .done = true,
+               });
+
+      /* Write barrier so that update to the head are made visible */
+      io_uring_smp_store_release(cring_head, head);
+    }
   }
 }
 
@@ -987,7 +992,7 @@ QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
       .op = QIO_KQ_SHUTDOWN,
 
       .ke.ident = fd,
-      
+
       .shutdown.how = how,
   });
 }
