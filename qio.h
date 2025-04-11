@@ -426,6 +426,11 @@ qd_t append_sqe(struct io_uring_sqe *src_sqe) {
 
 qd_t qopen(const char *path) { return qopenat(AT_FDCWD, path); }
 
+/*
+ * TODO: Properly setup mode here
+ *
+ * Created files permissions are wonky.
+ */
 qd_t qopenat(qfd_t fd, const char *path) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_OPENAT,
