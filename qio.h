@@ -661,8 +661,23 @@ v_kevent pending_ops;
 
 QIO_API void qio_destroy() {}
 
+int setfd_nonblock(int fd) {
+  int flags = fcntl(fd, F_GETFL);
+  return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
 QIO_API int32_t qio_init(uint64_t size) {
   v_kevent_create(&pending_ops, 64);
+
+  int res;
+  if ((res = setfd_nonblock(STDIN_FILENO)) < 0)
+    return res;
+
+  if ((res = setfd_nonblock(STDOUT_FILENO)) < 0)
+    return res;
+
+  if ((res = setfd_nonblock(STDERR_FILENO)) < 0)
+    return res;
 
   queue = kqueue();
 
