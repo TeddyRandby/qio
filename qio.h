@@ -726,6 +726,9 @@ void resolve_polled(struct kevent *events, int nevents) {
         case QIO_KQ_WRITE: {
           result =
               pwrite(qioke->ke.ident, qioke->write.buf, qioke->write.n, -1);
+          
+          if (result > 0)
+              fsync(qioke->ke.ident);
           goto next;
         }
         case QIO_KQ_ACCEPT: {
