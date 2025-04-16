@@ -67,7 +67,7 @@ QIO_API void qio_destroy();
 QIO_API qd_t qopen(const char *path);
 QIO_API qd_t qopenat(qfd_t fd, const char *path);
 
-QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]);
+QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 QIO_API qd_t qsocket(int32_t domain, int32_t type, int32_t protocol);
@@ -447,14 +447,13 @@ qd_t qopenat(qfd_t fd, const char *path) {
  * IO_URING op.
  */
 
-QIO_API qd_t qread(qfd_t fd, int64_t offset, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_READ,
       .fd = fd,
       .addr = (uintptr_t)buf,
       .len = n,
-      .off = offset,
   });
 }
 
@@ -600,7 +599,6 @@ struct qio_kevent {
     } openat;
 
     struct {
-      int64_t off;
       uint64_t n;
       uint8_t *buf;
     } read;
@@ -739,8 +737,7 @@ void resolve_polled(struct kevent *events, int nevents) {
          */
         switch (qioke->op) {
         case QIO_KQ_READ: {
-          result = pread(qioke->ke.ident, qioke->read.buf, qioke->read.n,
-                         qioke->read.off);
+          result = read(qioke->ke.ident, qioke->read.buf, qioke->read.n);
           goto next;
         }
         case QIO_KQ_WRITE: {
@@ -939,7 +936,7 @@ QIO_API qd_t qopen(const char *path) {
 
 QIO_API qd_t qopenat(qfd_t fd, const char *path) { return -1; };
 
-QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_READ,
 
@@ -947,7 +944,6 @@ QIO_API qd_t qread(qfd_t fd, int64_t off, uint64_t n, uint8_t buf[n]) {
       .ke.flags = EV_ADD | EV_ONESHOT,
       .ke.filter = EVFILT_READ,
 
-      .read.off = off,
       .read.n = n,
       .read.buf = buf,
   });
