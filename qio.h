@@ -901,10 +901,10 @@ QIO_API int32_t qio_loop() {
   struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
 
   while (true) {
-    // if (!pending_ops.len) {
-    //   thrd_sleep(&interval, nullptr);
-    //   continue;
-    // }
+    if (!pending_ops.len) {
+      thrd_sleep(&interval, nullptr);
+      continue;
+    }
 
     struct timespec t = {0};
 
