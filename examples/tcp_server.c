@@ -1,6 +1,7 @@
 #include "../qio.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define QSIZE 256
 
@@ -50,14 +51,19 @@ int main() {
                   strerror(-server_sock)),
            1;
 
-  // Bind and Listen are not available in my kernel's version of io_uring yet.
-  if ((bind(server_sock, (struct sockaddr *)&server_address,
-            sizeof(server_address))) < 0)
+  qd_t bqd = qbind(server_sock, &server_address, sizeof(server_address));
+
+  if (qd_result(bqd) < 0)
     return printf("[ERROR] Could not bind socket\n"), 1;
 
+  qd_destroy(bqd);
+
   const int wait_size = 16;
-  if (listen(server_sock, wait_size) < 0)
+  qd_t lqd = qlisten(server_sock, wait_size);
+  if (qd_result(lqd) < 0)
     return printf("[ERROR] Could not open socket for listening\n"), 1;
+
+  qd_destroy(lqd);
 
   printf("[INFO] Listening on port %i\n", server_port);
 
@@ -148,7 +154,8 @@ int main() {
         /*printf("[INFO]: Checking queued recv %li\n", queued_recv);*/
         if (qd_status(queued_recv)) {
           int64_t n = qd_result(queued_recv);
-          printf("[INFO %i]: Queued recv %li is done: %li.\n", i, queued_recv, n);
+          printf("[INFO %i]: Queued recv %li is done: %li.\n", i, queued_recv,
+                 n);
 
           // Client has requested a shutdown.
           if (n == 0) {

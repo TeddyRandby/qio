@@ -528,12 +528,6 @@ QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
   });
 }
 
-QIO_API qd_t qlisten(qfd_t fd, int32_t backlog) { return -1; }
-
-QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen) { return -1; }
-
-// When kernel version updates
-/*
 QIO_API qd_t qlisten(qfd_t fd, int32_t backlog) {
   return append_sqe(&(struct io_uring_sqe){
     .opcode = IORING_OP_LISTEN,
@@ -546,11 +540,10 @@ QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen) {
   return append_sqe(&(struct io_uring_sqe){
     .opcode = IORING_OP_BIND,
     .fd = fd,
-    .addr = addr,
+    .addr = (uintptr_t)addr,
     .off = addrlen,
   });
 }
-*/
 
 #elifdef QIO_MACOS
 
