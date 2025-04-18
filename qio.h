@@ -1,7 +1,9 @@
 #ifndef QIO_H
 #define QIO_H
 
+#include <arpa/inet.h>
 #include <assert.h>
+#include <netinet/in.h>
 #include <stdint.h>
 #include <threads.h>
 #include <time.h>
@@ -61,6 +63,10 @@ QIO_API int32_t qio_init(uint64_t size);
 QIO_API int32_t qio_loop();
 QIO_API void qio_destroy();
 
+struct qio_addr;
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+                         struct qio_addr *dst);
+
 /*
  * The following are the 'queued' versions of corresponding POSIX functions.
  */
@@ -70,13 +76,13 @@ QIO_API qd_t qopenat(qfd_t fd, const char *path);
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
-QIO_API qd_t qsocket(int32_t domain, int32_t type, int32_t protocol);
-QIO_API qd_t qlisten(qfd_t fd, int32_t backlog);
-QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags);
-QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen);
-QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
-QIO_API qd_t qclose(qfd_t fd);
-QIO_API qd_t qshutdown(qfd_t fd, int32_t how);
+QIO_API qd_t qsocket();
+
+QIO_API qd_t qbind(qfd_t fd, struct qio_addr *addr);
+QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog);
+QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
+
+QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
 
 QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
@@ -89,6 +95,7 @@ struct qio_op_t {
   uint64_t flags;
   /* User Data */
   union {
+    void *up;
     uint64_t ud;
     qd_t next_free;
   };
@@ -229,6 +236,22 @@ QIO_API qd_t qd_next() {
 
 #define io_uring_smp_load_acquire(p)                                           \
   atomic_load_explicit((_Atomic typeof(*(p)) *)(p), memory_order_acquire)
+
+struct qio_addr {
+  union {
+    struct sockaddr addr;
+    struct sockaddr_in6 addr_in;
+  };
+  socklen_t len;
+};
+
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+                         struct qio_addr *dst) {
+  dst->len = sizeof(dst->addr_in.sin6_addr);
+  dst->addr_in.sin6_port = htons(port);
+  dst->addr_in.sin6_family = AF_INET6;
+  return inet_pton(AF_INET6, src, &dst->addr_in.sin6_addr);
+}
 
 static qfd_t ring;
 
@@ -486,12 +509,12 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
-QIO_API qd_t qsocket(int domain, int type, int protocol) {
+QIO_API qd_t qsocket() {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SOCKET,
-      .fd = domain,
-      .len = protocol,
-      .off = type,
+      .fd = AF_INET6,
+      .len = 0,
+      .off = SOCK_STREAM,
   });
 }
 
@@ -509,39 +532,38 @@ QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
   });
 }
 
-QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
+QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_ACCEPT,
       .fd = fd,
-      .accept_flags = flags,
-      .addr = (uintptr_t)addr,
-      .off = (uintptr_t)addrlen,
+      .addr = (uintptr_t)&addr_out->addr,
+      .off = (uintptr_t)&addr_out->len,
   });
 }
 
-QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
+QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_CONNECT,
       .fd = fd,
-      .addr = (uintptr_t)addr,
-      .off = addrlen,
+      .addr = (uintptr_t)&addr->addr,
+      .off = addr->len,
   });
 }
 
-QIO_API qd_t qlisten(qfd_t fd, int32_t backlog) {
+QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
   return append_sqe(&(struct io_uring_sqe){
-    .opcode = IORING_OP_LISTEN,
-    .fd = fd,
-    .len = backlog,
+      .opcode = IORING_OP_LISTEN,
+      .fd = fd,
+      .len = backlog,
   });
 }
 
-QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen) {
+QIO_API qd_t qbind(qfd_t fd, struct qio_addr *addr) {
   return append_sqe(&(struct io_uring_sqe){
-    .opcode = IORING_OP_BIND,
-    .fd = fd,
-    .addr = (uintptr_t)addr,
-    .off = addrlen,
+      .opcode = IORING_OP_BIND,
+      .fd = fd,
+      .addr = (uintptr_t)&addr->addr_in,
+      .off = (socklen_t) sizeof(addr->addr_in),
   });
 }
 

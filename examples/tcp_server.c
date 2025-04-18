@@ -38,23 +38,24 @@ int main() {
   while (!initialized)
     ;
 
-  struct sockaddr_in server_address = {
-      .sin_family = AF_INET,
-      .sin_port = htons(server_port),
-      .sin_addr.s_addr = htonl(INADDR_ANY),
-  };
-
-  int server_sock = qd_result(qsocket(PF_INET, SOCK_STREAM, 0));
+  int server_sock = qd_result(qsocket());
 
   if (server_sock < 0)
     return printf("[ERROR] Failed to create server socket: %s.\n",
                   strerror(-server_sock)),
            1;
 
-  qd_t bqd = qbind(server_sock, &server_address, sizeof(server_address));
+  struct qio_addr addr;
 
-  if (qd_result(bqd) < 0)
-    return printf("[ERROR] Could not bind socket\n"), 1;
+  if (qio_addrfrom("::1", server_port, &addr) < 0)
+    return printf("[ERROR] Failed to create address\n"), 1;
+
+  qd_t bqd = qbind(server_sock, &addr);
+
+  int res = qd_result(bqd);
+
+  if (res < 0)
+    return printf("[ERROR] Could not bind socket: %s\n", strerror(-res)), 1;
 
   qd_destroy(bqd);
 
@@ -100,8 +101,7 @@ int main() {
     for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
       // This client slot has no connected client. Queue an accept.
       if (clients[i] == -1 && accepts[i] == -1) {
-        accepts[i] =
-            qaccept(server_sock, &client_address, &client_address_len, 0);
+        accepts[i] = qaccept(server_sock, &addr);
         printf("[INFO]: Queued accept for %i: %li\n", i, accepts[i]);
         continue;
       }

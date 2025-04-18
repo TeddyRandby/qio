@@ -115,6 +115,11 @@ qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 ```
 ## Examples
 For usage exapmles, it is best to check the `examples/` directory.
+## Sockets
+A quick aside - because this project aims to be cross platform, *all* sockets and addresses
+are configured to be IPV6 TCP Streams. (Note the lack of domain/type/protocol arguments to `qsocket`).
+This simplifies the interface and also provides (hopefully) some uniform behavior across platforms.
+Do note that because all address are IPV6, localhost is written as `'::1'` instead of `'127.0.0.1'`.
 ### Peculiar usage notes
 To simplify the interface, `qio` uses some top-level `static` variables.
 This can be confusing and seem contradictory to QIO's header-only nature. And if you notice,
