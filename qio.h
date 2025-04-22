@@ -226,7 +226,13 @@ QIO_API qd_t qd_next() {
   return mtx_unlock(&freelist_mtx), qd;
 }
 
+#ifndef QIO_LOOP_INTERVAL_NS
 #define QIO_LOOP_INTERVAL_NS 500000
+#endif
+
+#ifndef QIO_INTERNAL_QUEUE_INITIAL_LEN
+#define QIO_INTERNAL_QUEUE_INITIAL_LEN 1024
+#endif
 
 #ifdef QIO_LINUX
 #define io_uring_smp_store_release(p, v)                                       \
@@ -361,7 +367,7 @@ QIO_API int32_t qio_loop() {
        */
       v_qd_set(&qds, qid,
                (struct qio_op_t){
-                   .result = cqe->res,
+                   .result = cqe->res == -EINTR ? 0 : cqe->res,
                    .flags = cqe->flags,
                    .done = true,
                });
@@ -377,7 +383,7 @@ QIO_API void qio_destroy() {}
 QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
   ring_entries = size;
-  v_qd_create(&qds, 64);
+  v_qd_create(&qds, QIO_INTERNAL_QUEUE_INITIAL_LEN);
   mtx_init(&freelist_mtx, mtx_plain);
 
   struct io_uring_params p = {0};
@@ -694,7 +700,7 @@ int setfd_nonblock(int fd) {
 }
 
 QIO_API int32_t qio_init(uint64_t size) {
-  v_kevent_create(&pending_ops, 64);
+  v_kevent_create(&pending_ops, QIO_INTERNAL_QUEUE_INITIAL_LEN);
 
   int res;
   if ((res = setfd_nonblock(STDIN_FILENO)) < 0)
@@ -805,6 +811,8 @@ void resolve_polled(struct kevent *events, int nevents) {
     /* We ran our operation. Re-queue if necessary. */
     if (result < 0 && errno == EAGAIN || errno == EWOULDBLOCK)
       v_kevent_push(&pending_ops, *qioke);
+    else if (result < 0 && errno == EINTR)
+      resolve_qio_kevent(qioke, 0, 0);
     else
       resolve_qio_kevent(qioke, result, 0);
   }
