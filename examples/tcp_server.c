@@ -5,7 +5,6 @@
 
 #define QSIZE 256
 
-const char *const server_name = "localhost";
 const int server_port = 8077;
 
 #include <arpa/inet.h>
@@ -27,6 +26,62 @@ int io_loop(void *initialized) {
 
   return qio_destroy(), 0;
 }
+
+int io_client(void *) {
+  int client_sock = qd_destroy(qsocket());
+
+  if (client_sock < 0)
+    return printf("[ERROR] Failed to create server socket: %s.\n",
+                  strerror(-client_sock)),
+           1;
+
+  struct qio_addr addr;
+
+  if (qio_addrfrom("::1", server_port, &addr) < 0)
+    return printf("[ERROR] Failed to create address\n"), 1;
+
+  int res = qd_destroy(qconnect(client_sock, &addr));
+
+  if (res < 0)
+    return printf("[ERROR] Failed to connect: %s\n", strerror(-res)), 1;
+
+  const char *msg = "MAGIC_MESSAGE";
+  const size_t n = strlen(msg);
+  const char buf[n];
+
+  res = qd_destroy(qsend(client_sock, n, (uint8_t *)msg));
+
+  if (res < 0)
+    return printf("[ERROR] Failed to send: %s\n", strerror(-res)), 1;
+
+  res = qd_destroy(qrecv(client_sock, n, (uint8_t *)buf));
+
+  if (res < 0)
+    return printf("[ERROR] Failed to recv: %s\n", strerror(-res)), 1;
+
+  for (size_t i = 0; i < n; i++) {
+    // Double check that our echo server echoes
+    if (buf[i] != msg[i])
+      return printf("[ERROR] Echo server sent mismstched byte %c, but expected "
+                    "%c\n",
+                    buf[i], msg[i]),
+             1;
+  }
+
+  res = qd_destroy(qshutdown(client_sock));
+
+  if (res < 0)
+    return printf("[ERROR] Failed to close: %s\n", strerror(-res)), 1;
+
+  res = qd_destroy(qclose(client_sock));
+
+  if (res < 0)
+    return printf("[ERROR] Failed to close: %s\n", strerror(-res)), 1;
+
+  return 0;
+}
+
+#define N_CLIENTS 10
 
 int main() {
   bool initialized = false;
@@ -67,6 +122,12 @@ int main() {
   qd_destroy(lqd);
 
   printf("[INFO] Listening on port %i\n", server_port);
+
+  for (int i = 0; i < N_CLIENTS; i++) {
+    thrd_t cl;
+    if (thrd_create(&cl, io_client, nullptr) != thrd_success)
+      return printf("[ERROR] Failed to spawn client"), 1;
+  }
 
   // socket address used to store client address
   struct sockaddr_in client_address;

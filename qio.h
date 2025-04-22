@@ -78,7 +78,7 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 QIO_API qd_t qsocket();
 
-QIO_API qd_t qbind(qfd_t fd, struct qio_addr *addr);
+QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr);
 QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog);
 QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
 
@@ -192,11 +192,11 @@ static inline qd_t _freelist_pop() {
   return qd;
 }
 
-QIO_API void qd_destroy(qd_t qd) {
+QIO_API int qd_destroy(qd_t qd) {
   assert(qd < qds.len);
 
   /* Block until the operation is done. */
-  qd_result(qd);
+  int32_t result = qd_result(qd);
 
   assert(v_qd_val_at(&qds, qd).done);
 
@@ -205,11 +205,9 @@ QIO_API void qd_destroy(qd_t qd) {
   v_qd_set(&qds, qd, destroyed);
 
   if (qd_free == negative_one)
-    return qd_free = qd, (void)mtx_unlock(&freelist_mtx);
+    return qd_free = qd, (void)mtx_unlock(&freelist_mtx), result;
 
-  _freelist_push(qd);
-
-  mtx_unlock(&freelist_mtx);
+  return _freelist_push(qd), mtx_unlock(&freelist_mtx), result;
 }
 
 QIO_API qd_t qd_next() {
@@ -247,7 +245,7 @@ struct qio_addr {
 
 QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
-  dst->len = sizeof(dst->addr_in.sin6_addr);
+  dst->len = sizeof(dst->addr_in);
   dst->addr_in.sin6_port = htons(port);
   dst->addr_in.sin6_family = AF_INET6;
   return inet_pton(AF_INET6, src, &dst->addr_in.sin6_addr);
@@ -525,10 +523,28 @@ QIO_API qd_t qclose(qfd_t fd) {
   });
 }
 
-QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
+QIO_API qd_t qshutdown(qfd_t fd) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SHUTDOWN,
       .fd = fd,
+      .len = SHUT_RDWR,
+  });
+}
+
+QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
+  return append_sqe(&(struct io_uring_sqe){
+      .opcode = IORING_OP_LISTEN,
+      .fd = fd,
+      .len = backlog,
+  });
+}
+
+QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
+  return append_sqe(&(struct io_uring_sqe){
+      .opcode = IORING_OP_BIND,
+      .fd = fd,
+      .addr = (uintptr_t)&addr->addr_in,
+      .off = addr->len,
   });
 }
 
@@ -550,24 +566,23 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
   });
 }
 
-QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
-  return append_sqe(&(struct io_uring_sqe){
-      .opcode = IORING_OP_LISTEN,
-      .fd = fd,
-      .len = backlog,
-  });
-}
-
-QIO_API qd_t qbind(qfd_t fd, struct qio_addr *addr) {
-  return append_sqe(&(struct io_uring_sqe){
-      .opcode = IORING_OP_BIND,
-      .fd = fd,
-      .addr = (uintptr_t)&addr->addr_in,
-      .off = (socklen_t) sizeof(addr->addr_in),
-  });
-}
-
 #elifdef QIO_MACOS
+
+struct qio_addr {
+  union {
+    struct sockaddr addr;
+    struct sockaddr_in6 addr_in;
+  };
+  socklen_t len;
+};
+
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+                         struct qio_addr *dst) {
+  dst->len = sizeof(dst->addr_in.sin6_addr);
+  dst->addr_in.sin6_port = htons(port);
+  dst->addr_in.sin6_family = AF_INET6;
+  return inet_pton(AF_INET6, src, &dst->addr_in.sin6_addr);
+}
 
 /*
  * This impl needs a lot of work - it isn't functional.
@@ -624,26 +639,22 @@ struct qio_kevent {
     } write;
 
     struct {
-      int32_t domain, protocol, type;
     } socket;
 
     struct {
-      void *addr, *addrlen;
-      uint32_t flags;
+      struct qio_addr *addr_out;
     } accept;
 
     struct {
-      void *addr;
-      uint64_t addrlen;
+      const struct qio_addr *addr;
     } connect;
 
     struct {
-      void *addr;
-      uint64_t addrlen;
+      const struct qio_addr *addr;
     } bind;
 
     struct {
-      uint64_t backlog;
+      uint32_t backlog;
     } listen;
 
     struct {
@@ -763,8 +774,8 @@ void resolve_polled(struct kevent *events, int nevents) {
           goto next;
         }
         case QIO_KQ_ACCEPT: {
-          result = accept(qioke->ke.ident, qioke->accept.addr,
-                          qioke->accept.addrlen);
+          result = accept(qioke->ke.ident, &qioke->accept.addr_out->addr,
+                          &qioke->accept.addr_out->len);
           goto next;
         }
         case QIO_KQ_SEND: {
@@ -841,7 +852,7 @@ int flush_pending(struct kevent *events, int nevents) {
     }
     case QIO_KQ_SOCKET: {
       // Perform the `socket` syscall.
-      int fd = socket(ke->socket.domain, ke->socket.type, ke->socket.protocol);
+      int fd = socket(AF_INET6, SOCK_STREAM, 0);
       if (fd < 0) {
         resolve_qio_kevent(ke, fd, 0);
         continue;
@@ -854,11 +865,6 @@ int flush_pending(struct kevent *events, int nevents) {
       }
 
       resolve_qio_kevent(ke, fd, 0);
-      continue;
-    }
-    case QIO_KQ_CONNECT: {
-      int res = connect(ke->ke.ident, ke->connect.addr, ke->connect.addrlen);
-      resolve_qio_kevent(ke, res, 0);
       continue;
     }
     case QIO_KQ_CLOSE: {
@@ -877,7 +883,13 @@ int flush_pending(struct kevent *events, int nevents) {
       continue;
     }
     case QIO_KQ_BIND: {
-      int res = bind(ke->ke.ident, ke->bind.addr, ke->bind.addrlen);
+      int res = bind(ke->ke.ident, &ke->bind.addr->addr_in, ke->bind.addr->len);
+      resolve_qio_kevent(ke, res, 0);
+      continue;
+    }
+    case QIO_KQ_CONNECT: {
+      int res =
+          connect(ke->ke.ident, &ke->connect.addr->addr, ke->connect.addr->len);
       resolve_qio_kevent(ke, res, 0);
       continue;
     }
@@ -949,7 +961,15 @@ QIO_API qd_t qopen(const char *path) {
   });
 }
 
-QIO_API qd_t qopenat(qfd_t fd, const char *path) { return -1; };
+QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+  return append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_OPENAT,
+
+      .ke.ident = fd,
+
+      .openat.path = path,
+  });
+};
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   return append_kevent(&(struct qio_kevent){
@@ -977,7 +997,7 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 };
 
-QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
+QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_ACCEPT,
 
@@ -985,30 +1005,23 @@ QIO_API qd_t qaccept(qfd_t fd, void *addr, void *addrlen, uint32_t flags) {
       .ke.flags = EV_ADD | EV_ONESHOT,
       .ke.filter = EVFILT_READ,
 
-      .accept.addr = addr,
-      .accept.addrlen = addrlen,
-      .accept.flags = flags,
+      .accept.addr_out = addr_out,
   });
 }
 
-QIO_API qd_t qsocket(int domain, int type, int protocol) {
+QIO_API qd_t qsocket() {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SOCKET,
-
-      .socket.domain = domain,
-      .socket.protocol = protocol,
-      .socket.type = type,
   });
 };
 
-QIO_API qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen) {
+QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_CONNECT,
 
       .ke.ident = fd,
 
       .connect.addr = addr,
-      .connect.addrlen = addrlen,
   });
 };
 
@@ -1020,13 +1033,13 @@ QIO_API qd_t qclose(qfd_t fd) {
   });
 };
 
-QIO_API qd_t qshutdown(qfd_t fd, int32_t how) {
+QIO_API qd_t qshutdown(qfd_t fd) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SHUTDOWN,
 
       .ke.ident = fd,
 
-      .shutdown.how = how,
+      .shutdown.how = SHUT_RDWR,
   });
 }
 
@@ -1056,7 +1069,7 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 };
 
-QIO_API qd_t qlisten(qfd_t fd, int32_t backlog) {
+QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_LISTEN,
 
@@ -1068,7 +1081,7 @@ QIO_API qd_t qlisten(qfd_t fd, int32_t backlog) {
   });
 }
 
-QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen) {
+QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_RECV,
 
@@ -1077,7 +1090,6 @@ QIO_API qd_t qbind(qfd_t fd, void *addr, uint64_t addrlen) {
       .ke.filter = EVFILT_READ,
 
       .bind.addr = addr,
-      .bind.addrlen = addrlen,
   });
 }
 
