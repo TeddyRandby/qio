@@ -457,6 +457,7 @@ qd_t qopenat(qfd_t fd, const char *path) {
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
       .addr = (uintptr_t)path,
+      .len = 0666,
       .open_flags = O_RDWR | O_CREAT | O_APPEND,
   });
 }
@@ -847,7 +848,7 @@ int flush_pending(struct kevent *events, int nevents) {
     case QIO_KQ_OPENAT: {
       // Perform the `openat` syscall.
       int fd = openat(ke->ke.ident, ke->openat.path,
-                      O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK);
+                      O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK, 0666);
 
       resolve_qio_kevent(ke, fd, 0);
       continue;
