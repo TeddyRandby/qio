@@ -1,19 +1,15 @@
 #ifndef QIO_H
 #define QIO_H
 
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netinet/in.h>
-#include <stdint.h>
-#include <threads.h>
-#include <time.h>
-
 #define QIO_API static inline
 
 #ifdef QIO_LINUX
 
+#include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/io_uring.h>
+#include <netinet/in.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
