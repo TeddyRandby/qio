@@ -5,10 +5,10 @@
 
 #ifdef QIO_LINUX
 
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/io_uring.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
@@ -27,6 +27,8 @@ typedef int qfd_t;
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 typedef int qfd_t;
 
