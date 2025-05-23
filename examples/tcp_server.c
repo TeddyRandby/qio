@@ -28,7 +28,7 @@ int io_loop(void *initialized) {
 }
 
 int io_client(void *) {
-  int client_sock = qd_destroy(qsocket());
+  int client_sock = qd_destroy(qsocket(QSOCK_TCP));
 
   if (client_sock < 0)
     return printf("[ERROR] Failed to create server socket: %s.\n",
@@ -93,7 +93,7 @@ int main() {
   while (!initialized)
     ;
 
-  int server_sock = qd_result(qsocket());
+  int server_sock = qd_result(qsocket(QSOCK_TCP));
 
   if (server_sock < 0)
     return printf("[ERROR] Failed to create server socket: %s.\n",

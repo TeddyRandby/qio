@@ -74,7 +74,8 @@ QIO_API qd_t qopenat(qfd_t fd, const char *path);
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
-QIO_API qd_t qsocket();
+enum qsock_type { QSOCK_TCP, QSOCK_UDP };
+QIO_API qd_t qsocket(enum qsock_type type);
 
 QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr);
 QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog);
@@ -514,12 +515,23 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
-QIO_API qd_t qsocket() {
+QIO_API qd_t qsocket(enum qsock_type type) {
+  int os_type;
+  switch (type) {
+  case QSOCK_TCP:
+    os_type = SOCK_STREAM;
+    break;
+  case QSOCK_UDP:
+    os_type = SOCK_DGRAM;
+    break;
+  default:
+    return -1;
+  }
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SOCKET,
       .fd = AF_INET6,
       .len = 0,
-      .off = SOCK_STREAM,
+      .off = os_type,
   });
 }
 
@@ -646,6 +658,7 @@ struct qio_kevent {
     } write;
 
     struct {
+      int type;
     } socket;
 
     struct {
@@ -861,7 +874,7 @@ int flush_pending(struct kevent *events, int nevents) {
     }
     case QIO_KQ_SOCKET: {
       // Perform the `socket` syscall.
-      int fd = socket(AF_INET6, SOCK_STREAM, 0);
+      int fd = socket(AF_INET6, ke->socket.type, 0);
       if (fd < 0) {
         resolve_qio_kevent(ke, fd, 0);
         continue;
@@ -892,7 +905,7 @@ int flush_pending(struct kevent *events, int nevents) {
       continue;
     }
     case QIO_KQ_BIND: {
-      int res = bind(ke->ke.ident, &ke->bind.addr->addr_in, ke->bind.addr->len);
+      int res = bind(ke->ke.ident, (void*)&ke->bind.addr->addr_in, ke->bind.addr->len);
       resolve_qio_kevent(ke, res, 0);
       continue;
     }
@@ -1018,9 +1031,21 @@ QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
   });
 }
 
-QIO_API qd_t qsocket() {
+QIO_API qd_t qsocket(enum qsock_type type) {
+  int os_type;
+  switch (type) {
+  case QSOCK_TCP:
+    os_type = SOCK_STREAM;
+    break;
+  case QSOCK_UDP:
+    os_type = SOCK_DGRAM;
+    break;
+  default:
+    return -1;
+  }
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SOCKET,
+      .socket.type = os_type,
   });
 };
 
