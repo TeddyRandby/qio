@@ -102,7 +102,7 @@ int main() {
 
   struct qio_addr addr;
 
-  if (qio_addrfrom("::1", server_port, &addr) < 0)
+  if (qio_addrfrom("localhost", server_port, &addr) < 0)
     return printf("[ERROR] Failed to create address\n"), 1;
 
   qd_t bqd = qbind(server_sock, &addr);

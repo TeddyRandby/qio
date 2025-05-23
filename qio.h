@@ -5,10 +5,11 @@
 
 #ifdef QIO_LINUX
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/io_uring.h>
-#include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
@@ -23,12 +24,13 @@ typedef int qfd_t;
 
 #elifdef QIO_MACOS
 
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
+#include <netdb.h>
 
 typedef int qfd_t;
 
@@ -241,19 +243,31 @@ QIO_API qd_t qd_next() {
   atomic_load_explicit((_Atomic typeof(*(p)) *)(p), memory_order_acquire)
 
 struct qio_addr {
-  union {
-    struct sockaddr addr;
-    struct sockaddr_in6 addr_in;
-  };
+  struct sockaddr_in6 addr;
   socklen_t len;
 };
 
 QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
-  dst->len = sizeof(dst->addr_in);
-  dst->addr_in.sin6_port = htons(port);
-  dst->addr_in.sin6_family = AF_INET6;
-  return inet_pton(AF_INET6, src, &dst->addr_in.sin6_addr);
+  struct addrinfo *addrinfo;
+
+  struct addrinfo hints = {.ai_family = AF_INET6};
+  // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
+  // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
+
+  int s = getaddrinfo(src, nullptr, &hints, &addrinfo);
+  if (s != 0)
+    return s;
+
+  if (addrinfo == nullptr)
+    return -1;
+
+  struct sockaddr_in *saddr = (struct sockaddr_in *)addrinfo->ai_addr;
+  assert(addrinfo->ai_addrlen <= sizeof(dst->addr));
+  memcpy(&dst->addr, addrinfo->ai_addr, addrinfo->ai_addrlen);
+  dst->len = addrinfo->ai_addrlen;
+  dst->addr.sin6_port = htons(port);
+  return freeaddrinfo(addrinfo), 0;
 }
 
 static qfd_t ring;
@@ -562,7 +576,7 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_BIND,
       .fd = fd,
-      .addr = (uintptr_t)&addr->addr_in,
+      .addr = (uintptr_t)&addr->addr,
       .off = addr->len,
   });
 }
@@ -588,19 +602,32 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
 #elifdef QIO_MACOS
 
 struct qio_addr {
-  union {
-    struct sockaddr addr;
-    struct sockaddr_in6 addr_in;
-  };
+  struct sockaddr_in6 addr;
   socklen_t len;
 };
 
+// Implementation is the same as linux
 QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
-  dst->len = sizeof(dst->addr_in.sin6_addr);
-  dst->addr_in.sin6_port = htons(port);
-  dst->addr_in.sin6_family = AF_INET6;
-  return inet_pton(AF_INET6, src, &dst->addr_in.sin6_addr);
+  struct addrinfo *addrinfo;
+
+  struct addrinfo hints = {.ai_family = AF_INET6};
+  // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
+  // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
+
+  int s = getaddrinfo(src, nullptr, &hints, &addrinfo);
+  if (s != 0)
+    return s;
+
+  if (addrinfo == nullptr)
+    return -1;
+
+  struct sockaddr_in *saddr = (struct sockaddr_in *)addrinfo->ai_addr;
+  assert(addrinfo->ai_addrlen <= sizeof(dst->addr));
+  memcpy(&dst->addr, addrinfo->ai_addr, addrinfo->ai_addrlen);
+  dst->len = addrinfo->ai_addrlen;
+  dst->addr.sin6_port = htons(port);
+  return freeaddrinfo(addrinfo), 0;
 }
 
 /*
@@ -905,13 +932,13 @@ int flush_pending(struct kevent *events, int nevents) {
       continue;
     }
     case QIO_KQ_BIND: {
-      int res = bind(ke->ke.ident, (void*)&ke->bind.addr->addr_in, ke->bind.addr->len);
+      int res = bind(ke->ke.ident, (void *)&ke->bind.addr, ke->bind.addr->len);
       resolve_qio_kevent(ke, res, 0);
       continue;
     }
     case QIO_KQ_CONNECT: {
-      int res =
-          connect(ke->ke.ident, &ke->connect.addr->addr, ke->connect.addr->len);
+      int res = connect(ke->ke.ident, (void *)&ke->connect.addr->addr,
+                        ke->connect.addr->len);
       resolve_qio_kevent(ke, res, 0);
       continue;
     }
