@@ -26,11 +26,11 @@ typedef int qfd_t;
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <netdb.h>
 
 typedef int qfd_t;
 
@@ -546,6 +546,7 @@ QIO_API qd_t qsocket(enum qsock_type type) {
       .fd = AF_INET6,
       .len = 0,
       .off = os_type,
+      .rw_flags = O_NONBLOCK,
   });
 }
 
