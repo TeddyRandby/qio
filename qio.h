@@ -262,7 +262,7 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
   if (addrinfo == nullptr)
     return -1;
 
-  struct sockaddr_in *saddr = (struct sockaddr_in *)addrinfo->ai_addr;
+  struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)addrinfo->ai_addr;
   assert(addrinfo->ai_addrlen <= sizeof(dst->addr));
   memcpy(&dst->addr, addrinfo->ai_addr, addrinfo->ai_addrlen);
   dst->len = addrinfo->ai_addrlen;
@@ -546,7 +546,6 @@ QIO_API qd_t qsocket(enum qsock_type type) {
       .fd = AF_INET6,
       .len = 0,
       .off = os_type,
-      .rw_flags = O_NONBLOCK,
   });
 }
 
