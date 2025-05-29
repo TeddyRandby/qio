@@ -94,11 +94,31 @@ qd_t qopenat(qfd_t fd, const char* path);
 qd_t qread(qfd_t fd, uint64_t offset, uint64_t n, uint8_t buf[n]);
 qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
-qd_t qsocket(int domain, int type, int protocol);
-qd_t qaccept(qfd_t fd, void* addr, void* addrlen, uint32_t flags);
-qd_t qconnect(qfd_t fd, void *addr, uint64_t addrlen);
+/*
+* %------------------%
+* | QIO Address TYPE |
+* %------------------%
+* The qio_addr struct is used to when resolving hostnames for
+* qconnect, qbind, and for storing client address upon qaccept.
+* qio_addrfrom resolves the hostname with 'getaddrinfo' on posix.
+*/
+int qio_addrfrom(const char *restrict hostname, uint16_t port,
+                         struct qio_addr *dst);
+
+/*
+* QIO combines the socket type\domain\protocol arguments that
+* are found in posix into configurations that are common and
+* cross-platform. These are TCP and UDP.
+*/
+enum qsock_type { QSOCK_TCP, QSOCK_UDP };
+qd_t qsocket(enum qsock_type type);
+
+qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
+qd_t qbind(qfd_t fd, const struct qio_addr *addr);
+qd_t qlisten(qfd_t fd, uint32_t backlog);
+qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
 qd_t qclose(qfd_t fd);
-qd_t qshutdown(qfd_t fd, int32_t how);
+qd_t qshutdown(qfd_t fd);
 
 qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
