@@ -109,6 +109,7 @@ int qio_addrfrom(const char *restrict hostname, uint16_t port,
 * QIO combines the socket type\domain\protocol arguments that
 * are found in posix into configurations that are common and
 * cross-platform. These are TCP and UDP.
+* Note: These use IPv6 exclusively (for now, until it causes a problem).
 */
 enum qsock_type { QSOCK_TCP, QSOCK_UDP };
 qd_t qsocket(enum qsock_type type);
@@ -135,11 +136,6 @@ qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 ```
 ## Examples
 For usage exapmles, it is best to check the `examples/` directory.
-## Sockets
-A quick aside - because this project aims to be cross platform, *all* sockets and addresses
-are configured to be IPV6 TCP Streams. (Note the lack of domain/type/protocol arguments to `qsocket`).
-This simplifies the interface and also provides (hopefully) some uniform behavior across platforms.
-Do note that because all address are IPV6, localhost is written as `'::1'` instead of `'127.0.0.1'`.
 ### Peculiar usage notes
 To simplify the interface, `qio` uses some top-level `static` variables.
 This can be confusing and seem contradictory to QIO's header-only nature. And if you notice,
@@ -149,7 +145,7 @@ and only *defined* once (via the aforementioned macro guards), QIO is designed t
 The distinction here is to encourage the programmer to wrap qio's api with their own app-specific functionality.
 This functionality is then compiled as one translation unit and linked where needed in the larger application.
 
-Additionally, QIO does not try to detect the OS on its own. When building qio, it is important to define a macro
+Additionally, QIO does not try to detect the OS on its own. When building qio, it is necessary to define a macro
 telling QIO which platform implementation to use. The options are:
 - QIO_LINUX
 - QIO_MACOS
@@ -183,5 +179,3 @@ cross-platform flags nonsense at the moment. For now, always opening `r/w` with 
 There are two header files included in this repo alongside `qio.h`. One is a cross-platform implementation of the c11 threads API. On linux nowadays
 this is unnecessary, as `<threads.h>` likely just comes with your distribution. However other platforms are not up to speed on this optional part of the 
 c-standard, and so `"threads.h"` is provided here if you need it. `"vector.h"` provides a macro-hell generic vector, with some multi-threading capabilities.
-#### TODO:
-The tcp echo-server example is useful for testing, but it would be much better to write a significant test-application which can really push the system.
