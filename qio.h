@@ -85,7 +85,7 @@ QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
 
 QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
 
-QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
+QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]);
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 
 struct qio_op_t {
@@ -510,7 +510,7 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
-QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SEND,
@@ -681,7 +681,7 @@ struct qio_kevent {
 
     struct {
       uint64_t n;
-      uint8_t *buf;
+      const uint8_t *buf;
     } write;
 
     struct {
@@ -713,7 +713,7 @@ struct qio_kevent {
 
     struct {
       uint64_t n;
-      uint8_t *buf;
+      const uint8_t *buf;
     } send;
 
     struct {
@@ -815,7 +815,7 @@ void resolve_polled(struct kevent *events, int nevents) {
         }
         case QIO_KQ_WRITE: {
           result = 0;
-          uint8_t *buf = qioke->write.buf;
+          const uint8_t *buf = qioke->write.buf;
           uint32_t len = qioke->write.n;
 
           for (;;) {
@@ -1123,7 +1123,7 @@ QIO_API qd_t qshutdown(qfd_t fd) {
   });
 }
 
-QIO_API qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   return append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SEND,
 
