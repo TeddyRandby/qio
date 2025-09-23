@@ -814,10 +814,29 @@ void resolve_polled(struct kevent *events, int nevents) {
           goto next;
         }
         case QIO_KQ_WRITE: {
-          result = write(qioke->ke.ident, qioke->write.buf, qioke->write.n);
+          result = 0;
+          uint8_t *buf = qioke->write.buf;
+          uint32_t len = qioke->write.n;
+
+          for (;;) {
+            int bytes = write(qioke->ke.ident, buf, len);
+
+            if (bytes < 0) {
+              result = bytes;
+              break;
+            }
+
+            result += bytes;
+            len -= bytes;
+            buf += bytes;
+
+            if (len <= 0)
+              break;
+          }
 
           if (result > 0)
             fsync(qioke->ke.ident);
+
           goto next;
         }
         case QIO_KQ_ACCEPT: {
