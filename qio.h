@@ -51,7 +51,7 @@ typedef uint64_t qfd_t;
  *  - Check on the status of its corresponding operation.
  *  - Get the result of its operation
  */
-typedef int64_t qd_t;
+typedef int32_t qd_t;
 
 /*
  * Initialize QIO. This should only be called *once* per thread.
