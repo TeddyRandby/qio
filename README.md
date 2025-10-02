@@ -17,7 +17,7 @@ typedef /* os_fd_type */ qfd_t;
  *  - Check on the status of its corresponding operation.
  *  - Get the result of its operation
  */
-typedef int64_t qd_t;
+typedef int32_t qd_t;
 
 /*
  * %----------------%
@@ -167,8 +167,8 @@ The darwin implementation uses `kqueue`. IO operations are buffered into a threa
 These operations are performed by `qio_loop` when it comes across them. For reads/writes which do require polling, `qio_loop` batches out events to the kernel, and then tries to perform
 non-blocking reads/writes for the descriptors which received events. If these operations fail with E_AGAIN or E_WOULDBLOCK, they are placed onto the queue again to try later.
 #### Note:
-As this implementation requires all IO operations to be non-blocking, `stdio` and the like need to be modified with `fcntl` to include `O_NONBLOCK`. This can be taken care of in `qio_init`
-but isn't done yet.
+As this implementation requires all IO operations to be non-blocking, `stdio` and the like need to be modified with `fcntl` to include `O_NONBLOCK`. This is taken care of in `qio_init`,
+and will affect the rest of the program's behavior.
 ### Windows
 A windows implementation with IO Completion Ports is planned but not begun.
 #### A note on qopen

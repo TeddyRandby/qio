@@ -107,7 +107,7 @@ struct qio_op_t {
 #define V_CONCURRENT
 #include "vector.h"
 
-mtx_t freelist_mtx;
+mtx_t _qio_freelist_mtx;
 
 /*
  * The following variable (and other platform-specific globals like it)
@@ -116,8 +116,8 @@ mtx_t freelist_mtx;
  * a different thread than the one running the qio_loop. Because of this,
  * these data structures need to be thread-safe and static.
  */
-static v_qd qds = {0};
-static uint64_t qd_free = -1;
+static v_qd _qio_qds = {0};
+static uint64_t _qio_qd_free = -1;
 
 /*
  * This function is *not* blocking. It will immediately return:
@@ -125,8 +125,8 @@ static uint64_t qd_free = -1;
  *  - zero if the operation is still in progress.
  */
 QIO_API int8_t qd_status(qd_t qd) {
-  assert(qd < qds.len);
-  return v_qd_val_at(&qds, qd).done;
+  assert(qd < _qio_qds.len);
+  return v_qd_val_at(&_qio_qds, qd).done;
 }
 
 /*
@@ -134,97 +134,97 @@ QIO_API int8_t qd_status(qd_t qd) {
  * corresponding operation is complete.
  */
 QIO_API int64_t qd_result(qd_t qd) {
-  assert(qd < qds.len);
+  assert(qd < _qio_qds.len);
 
   // Simply block until we have received a response from the os.
   while (!qd_status(qd))
     ;
 
-  return v_qd_val_at(&qds, qd).result;
+  return v_qd_val_at(&_qio_qds, qd).result;
 }
 
 QIO_API void qd_setud(qd_t qd, uint64_t ud) {
-  assert(qd < qds.len);
+  assert(qd < _qio_qds.len);
 
-  struct qio_op_t v = v_qd_val_at(&qds, qd);
+  struct qio_op_t v = v_qd_val_at(&_qio_qds, qd);
 
   v.ud = ud;
 
-  v_qd_set(&qds, qd, v);
+  v_qd_set(&_qio_qds, qd, v);
 }
 
 QIO_API uint64_t qd_getud(qd_t qd, uint64_t ud) {
-  assert(qd < qds.len);
-  return v_qd_val_at(&qds, qd).ud;
+  assert(qd < _qio_qds.len);
+  return v_qd_val_at(&_qio_qds, qd).ud;
 }
 
-static uint64_t negative_one = -1;
-static struct qio_op_t destroyed = {.next_free = (uint64_t)-1};
+static const uint32_t negative_one = -1;
+static const struct qio_op_t destroyed = {.next_free = negative_one};
 
 /* the O(n) operation, appending to list */
 static inline void _freelist_push(qd_t qd) {
-  assert(qd_free != negative_one);
+  assert(_qio_qd_free != negative_one);
 
-  struct qio_op_t op = v_qd_val_at(&qds, qd_free);
-  qd_t p_qd = qd_free;
+  struct qio_op_t op = v_qd_val_at(&_qio_qds, _qio_qd_free);
+  qd_t p_qd = _qio_qd_free;
 
   while (op.next_free != negative_one) {
     p_qd = op.next_free;
-    op = v_qd_val_at(&qds, op.next_free);
+    op = v_qd_val_at(&_qio_qds, op.next_free);
   }
 
   assert(op.next_free == negative_one);
   assert(p_qd != negative_one);
-  assert(p_qd < qds.len);
+  assert(p_qd < _qio_qds.len);
 
   op.next_free = qd;
-  v_qd_set(&qds, p_qd, op);
+  v_qd_set(&_qio_qds, p_qd, op);
 }
 
 /* The O(1) operation, popping from list */
 static inline qd_t _freelist_pop() {
-  assert(qd_free != negative_one);
+  assert(_qio_qd_free != negative_one);
 
-  qd_t qd = qd_free;
+  qd_t qd = _qio_qd_free;
 
-  struct qio_op_t op = v_qd_val_at(&qds, qd_free);
-  qd_free = op.next_free;
+  struct qio_op_t op = v_qd_val_at(&_qio_qds, _qio_qd_free);
+  _qio_qd_free = op.next_free;
 
   return qd;
 }
 
 QIO_API int qd_destroy(qd_t qd) {
-  assert(qd < qds.len);
+  assert(qd < _qio_qds.len);
 
   /* Block until the operation is done. */
   int32_t result = qd_result(qd);
 
-  assert(v_qd_val_at(&qds, qd).done);
+  assert(v_qd_val_at(&_qio_qds, qd).done);
 
-  mtx_lock(&freelist_mtx);
+  mtx_lock(&_qio_freelist_mtx);
 
-  v_qd_set(&qds, qd, destroyed);
+  v_qd_set(&_qio_qds, qd, destroyed);
 
-  if (qd_free == negative_one)
-    return qd_free = qd, (void)mtx_unlock(&freelist_mtx), result;
+  if (_qio_qd_free == negative_one)
+    return _qio_qd_free = qd, (void)mtx_unlock(&_qio_freelist_mtx), result;
 
-  return _freelist_push(qd), mtx_unlock(&freelist_mtx), result;
+  return _freelist_push(qd), mtx_unlock(&_qio_freelist_mtx), result;
 }
 
 QIO_API qd_t qd_next() {
-  mtx_lock(&freelist_mtx);
+  mtx_lock(&_qio_freelist_mtx);
 
-  if (qd_free != negative_one) {
+  if (_qio_qd_free != negative_one) {
     qd_t qd = _freelist_pop();
 
     if (qd != negative_one)
-      return mtx_unlock(&freelist_mtx), qd;
+      return mtx_unlock(&_qio_freelist_mtx), qd;
   }
 
-  qd_t qd = v_qd_push(&qds, (struct qio_op_t){});
-  assert(qds.len > 0);
+  qd_t qd = v_qd_push(&_qio_qds, (struct qio_op_t){});
+  assert(_qio_qds.len > 0);
 
-  return mtx_unlock(&freelist_mtx), qd;
+  return mtx_unlock(&_qio_freelist_mtx), qd;
 }
 
 #ifndef QIO_LOOP_INTERVAL_NS
@@ -270,21 +270,21 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
   return freeaddrinfo(addrinfo), 0;
 }
 
-static qfd_t ring;
+static qfd_t _qio_ring;
 
-static uint32_t *sring_tail, *sring_head, *sring_mask, *sring_array,
-    *cring_head, *cring_tail, *cring_mask;
+static uint32_t *_qio_sring_tail, *_qio_sring_head, *_qio_sring_mask, *_qio_sring_array,
+    *_qio_cring_head, *_qio_cring_tail, *_qio_cring_mask;
 
-static struct io_uring_sqe *sqes;
-static struct io_uring_cqe *cqes;
-static uint32_t ring_entries;
+static struct io_uring_sqe *_qio_sqes;
+static struct io_uring_cqe *_qio_cqes;
+static uint32_t _qio_ring_entries;
 
 #define T struct io_uring_sqe
 #define NAME sqe
 #define V_CONCURRENT
 #include "vector.h"
 
-static v_sqe queued_sqes;
+static v_sqe _qio_queued_sqes;
 
 /* FIXME: Figure out a better syscall intrinsic system */
 int io_uring_setup(unsigned entries, struct io_uring_params *p) {
@@ -303,13 +303,13 @@ QIO_API int32_t qio_loop() {
 
   while (true) {
     /* Read barrier */
-    unsigned head = io_uring_smp_load_acquire(cring_head);
+    unsigned head = io_uring_smp_load_acquire(_qio_cring_head);
 
     /*
      * If we don't have any ops to queue and the receive buffer is empty:
      * Sleep and try again later.
      */
-    if (!queued_sqes.len && head == *cring_tail) {
+    if (!_qio_queued_sqes.len && head == *_qio_cring_tail) {
       thrd_sleep(&interval, nullptr);
       continue;
     }
@@ -317,39 +317,39 @@ QIO_API int32_t qio_loop() {
     /*
      * If we have opts to queue
      */
-    if (queued_sqes.len) {
+    if (_qio_queued_sqes.len) {
       /*
        * Atomically drain all our queued sqes into a local buffer.
        */
       v_sqe buffered;
-      v_sqe_drain(&queued_sqes, &buffered);
+      v_sqe_drain(&_qio_queued_sqes, &buffered);
 
       // Rudimentary assert here.
       // It would be better to just put everything we can in ring,
       // and re-queue the rest.
-      assert(buffered.len < ring_entries);
+      assert(buffered.len < _qio_ring_entries);
 
       for (int i = 0; i < buffered.len; i++) {
         struct io_uring_sqe *src_sqe = &buffered.data[i];
 
         unsigned index, tail;
-        tail = *sring_tail;
-        index = tail & *sring_mask;
+        tail = *_qio_sring_tail;
+        index = tail & *_qio_sring_mask;
 
-        assert(src_sqe->user_data < qds.len);
-        struct io_uring_sqe *dst_sqe = &sqes[index];
+        assert(src_sqe->user_data < _qio_qds.len);
+        struct io_uring_sqe *dst_sqe = &_qio_sqes[index];
         memcpy(dst_sqe, src_sqe, sizeof(struct io_uring_sqe));
 
-        sring_array[index] = index;
+        _qio_sring_array[index] = index;
         tail++;
 
         /* Update the tail */
-        io_uring_smp_store_release(sring_tail, tail);
+        io_uring_smp_store_release(_qio_sring_tail, tail);
       }
 
       /* System call to trigger kernel */
       if (buffered.len)
-        io_uring_enter(ring, buffered.len, 0, 0, nullptr);
+        io_uring_enter(_qio_ring, buffered.len, 0, 0, nullptr);
 
       /* Free our buffered list */
       v_sqe_destroy(&buffered);
@@ -358,18 +358,18 @@ QIO_API int32_t qio_loop() {
     /*
      * If we have ops completed
      */
-    if (head != *cring_tail) {
+    if (head != *_qio_cring_tail) {
       /* Get the entry */
-      unsigned index = head & (*cring_mask);
-      struct io_uring_cqe *cqe = &cqes[index];
+      unsigned index = head & (*_qio_cring_mask);
+      struct io_uring_cqe *cqe = &_qio_cqes[index];
       head++;
 
       qd_t qid = cqe->user_data;
 
-      assert(qid < qds.len);
-      assert(v_qd_val_at(&qds, qid).done == false);
-      assert(v_qd_val_at(&qds, qid).flags == 0);
-      assert(v_qd_val_at(&qds, qid).result == 0);
+      assert(qid < _qio_qds.len);
+      assert(v_qd_val_at(&_qio_qds, qid).done == false);
+      assert(v_qd_val_at(&_qio_qds, qid).flags == 0);
+      assert(v_qd_val_at(&_qio_qds, qid).result == 0);
       /*
        * Perform this via a set for two resons:
        *  - The struct is small enough that passying and copying by value is
@@ -378,7 +378,7 @@ QIO_API int32_t qio_loop() {
        * pointers into the vector is *unsafe* in a concurrent vector, as the
        * array could be reallocated out from underneath you.
        */
-      v_qd_set(&qds, qid,
+      v_qd_set(&_qio_qds, qid,
                (struct qio_op_t){
                    .result = cqe->res == -EINTR ? 0 : cqe->res,
                    .flags = cqe->flags,
@@ -386,25 +386,27 @@ QIO_API int32_t qio_loop() {
                });
 
       /* Write barrier so that update to the head are made visible */
-      io_uring_smp_store_release(cring_head, head);
+      io_uring_smp_store_release(_qio_cring_head, head);
     }
   }
 }
 
+/* NOOP */
 QIO_API void qio_destroy() {}
 
 QIO_API int32_t qio_init(uint64_t size) {
   /* Initialize qds. All OS's need to do this. */
-  ring_entries = size;
-  v_qd_create(&qds, QIO_INTERNAL_QUEUE_INITIAL_LEN);
-  mtx_init(&freelist_mtx, mtx_plain);
+  v_qd_create(&_qio_qds, QIO_INTERNAL_QUEUE_INITIAL_LEN);
+  mtx_init(&_qio_freelist_mtx, mtx_plain);
+
+  _qio_ring_entries = size;
 
   struct io_uring_params p = {0};
   /* The submission and completion queue */
   void *sq, *cq;
 
-  ring = io_uring_setup(ring_entries, &p);
-  if (ring < 0)
+  _qio_ring = io_uring_setup(_qio_ring_entries, &p);
+  if (_qio_ring < 0)
     return -1;
 
   int sring_sz = p.sq_off.array + p.sq_entries * sizeof(unsigned);
@@ -416,7 +418,7 @@ QIO_API int32_t qio_init(uint64_t size) {
     cring_sz = sring_sz;
   }
   sq = mmap(0, sring_sz, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
-            ring, IORING_OFF_SQ_RING);
+            _qio_ring, IORING_OFF_SQ_RING);
   if (sq == MAP_FAILED)
     return -1;
 
@@ -427,56 +429,51 @@ QIO_API int32_t qio_init(uint64_t size) {
   } else {
     /* Map in the completion queue ring buffer in older kernels separately */
     cq = mmap(0, cring_sz, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
-              ring, IORING_OFF_CQ_RING);
+              _qio_ring, IORING_OFF_CQ_RING);
     if (cq == MAP_FAILED)
       return -1;
   }
 
-  sring_tail = (uint32_t *)((uint8_t *)sq + p.sq_off.tail);
-  sring_head = (uint32_t *)((uint8_t *)sq + p.sq_off.head);
-  sring_mask = (uint32_t *)((uint8_t *)sq + p.sq_off.ring_mask);
-  sring_array = (uint32_t *)((uint8_t *)sq + p.sq_off.array);
+  _qio_sring_tail = (uint32_t *)((uint8_t *)sq + p.sq_off.tail);
+  _qio_sring_head = (uint32_t *)((uint8_t *)sq + p.sq_off.head);
+  _qio_sring_mask = (uint32_t *)((uint8_t *)sq + p.sq_off.ring_mask);
+  _qio_sring_array = (uint32_t *)((uint8_t *)sq + p.sq_off.array);
 
-  sqes = (struct io_uring_sqe *)mmap(
+  _qio_sqes = (struct io_uring_sqe *)mmap(
       0, p.sq_entries * sizeof(struct io_uring_sqe), PROT_READ | PROT_WRITE,
-      MAP_SHARED | MAP_POPULATE, ring, IORING_OFF_SQES);
+      MAP_SHARED | MAP_POPULATE, _qio_ring, IORING_OFF_SQES);
 
-  if (sqes == MAP_FAILED)
+  if (_qio_sqes == MAP_FAILED)
     return -1;
 
   assert(cq != nullptr);
 
-  cring_head = (uint32_t *)((uint8_t *)cq + p.cq_off.head);
-  cring_tail = (uint32_t *)((uint8_t *)cq + p.cq_off.tail);
-  cring_mask = (uint32_t *)((uint8_t *)cq + p.cq_off.ring_mask);
-  cqes = (struct io_uring_cqe *)((uint8_t *)cq + p.cq_off.cqes);
+  _qio_cring_head = (uint32_t *)((uint8_t *)cq + p.cq_off.head);
+  _qio_cring_tail = (uint32_t *)((uint8_t *)cq + p.cq_off.tail);
+  _qio_cring_mask = (uint32_t *)((uint8_t *)cq + p.cq_off.ring_mask);
+  _qio_cqes = (struct io_uring_cqe *)((uint8_t *)cq + p.cq_off.cqes);
 
   return 0;
 }
 
-qd_t append_sqe(struct io_uring_sqe *src_sqe) {
+qd_t _qio_append_sqe(struct io_uring_sqe *src_sqe) {
   qd_t qid = qd_next();
-  assert(qds.len > 0);
+  assert(_qio_qds.len > 0);
 
   src_sqe->user_data = qid;
-  v_sqe_push(&queued_sqes, *src_sqe);
+  v_sqe_push(&_qio_queued_sqes, *src_sqe);
 
   return qid;
 }
 
-qd_t qopen(const char *path) { return qopenat(AT_FDCWD, path); }
+QIO_API qd_t qopen(const char *path) { return qopenat(AT_FDCWD, path); }
 
-/*
- * TODO: Properly setup mode here
- *
- * Created files permissions are wonky.
- */
-qd_t qopenat(qfd_t fd, const char *path) {
-  return append_sqe(&(struct io_uring_sqe){
+QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
       .addr = (uintptr_t)path,
-      .len = 0666,
+      .len = 0666, // Created file permissions
       .open_flags = O_RDWR | O_CREAT | O_APPEND,
   });
 }
@@ -490,7 +487,7 @@ qd_t qopenat(qfd_t fd, const char *path) {
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   assert(n < UINT32_MAX);
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_READ,
       .fd = fd,
       .addr = (uintptr_t)buf,
@@ -501,7 +498,7 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   assert(n < UINT32_MAX);
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_WRITE,
       .fd = fd,
       .addr = (uintptr_t)buf,
@@ -512,7 +509,7 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 
 QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   assert(n < UINT32_MAX);
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SEND,
       .fd = fd,
       .addr = (uintptr_t)buf,
@@ -521,7 +518,7 @@ QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
 }
 
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_RECV,
       .fd = fd,
       .addr = (uintptr_t)buf,
@@ -531,6 +528,7 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 
 QIO_API qd_t qsocket(enum qsock_type type) {
   int os_type;
+
   switch (type) {
   case QSOCK_TCP:
     os_type = SOCK_STREAM;
@@ -541,7 +539,8 @@ QIO_API qd_t qsocket(enum qsock_type type) {
   default:
     return -1;
   }
-  return append_sqe(&(struct io_uring_sqe){
+
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SOCKET,
       .fd = AF_INET6,
       .len = 0,
@@ -550,14 +549,14 @@ QIO_API qd_t qsocket(enum qsock_type type) {
 }
 
 QIO_API qd_t qclose(qfd_t fd) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_CLOSE,
       .fd = fd,
   });
 }
 
 QIO_API qd_t qshutdown(qfd_t fd) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_SHUTDOWN,
       .fd = fd,
       .len = SHUT_RDWR,
@@ -565,7 +564,7 @@ QIO_API qd_t qshutdown(qfd_t fd) {
 }
 
 QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_LISTEN,
       .fd = fd,
       .len = backlog,
@@ -573,7 +572,7 @@ QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
 }
 
 QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_BIND,
       .fd = fd,
       .addr = (uintptr_t)&addr->addr,
@@ -582,7 +581,7 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
 }
 
 QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_ACCEPT,
       .fd = fd,
       .addr = (uintptr_t)&addr_out->addr,
@@ -591,7 +590,7 @@ QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
 }
 
 QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
-  return append_sqe(&(struct io_uring_sqe){
+  return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_CONNECT,
       .fd = fd,
       .addr = (uintptr_t)&addr->addr,
@@ -630,26 +629,7 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
   return freeaddrinfo(addrinfo), 0;
 }
 
-/*
- * This impl needs a lot of work - it isn't functional.
- * kqueue doesn't perform any operations - it just waits on events.
- *
- * This implementation needs to actually *perform*
- * reads, writes, accepts, sends, recvs, and the like.
- *
- * Maybe the best thing to do is to store this data in the kevent buffer.
- *
- * During QIO loop, we try and perform IO on for all events that we
- * received as ready. If we receive EAGAIN, we queue it again
- * to try later.
- *
- * This leaves all IO going through a single thread, and allows us
- * to make synthetic async events for operations that will just
- * wrap blocking syscalls (open, openat, socket, listen)
- */
-
-qfd_t queue;
-_Atomic int64_t waiting = 0;
+qfd_t _qio_queue;
 
 struct qio_kevent {
   struct kevent ke;
@@ -728,7 +708,7 @@ struct qio_kevent {
 #define V_CONCURRENT
 #include "vector.h"
 
-v_kevent pending_ops;
+v_kevent _qio_pending_ops;
 
 QIO_API void qio_destroy() {}
 
@@ -738,7 +718,7 @@ int setfd_nonblock(int fd) {
 }
 
 QIO_API int32_t qio_init(uint64_t size) {
-  v_kevent_create(&pending_ops, QIO_INTERNAL_QUEUE_INITIAL_LEN);
+  v_kevent_create(&_qio_pending_ops, QIO_INTERNAL_QUEUE_INITIAL_LEN);
 
   int res;
   if ((res = setfd_nonblock(STDIN_FILENO)) < 0)
@@ -750,10 +730,10 @@ QIO_API int32_t qio_init(uint64_t size) {
   if ((res = setfd_nonblock(STDERR_FILENO)) < 0)
     return res;
 
-  queue = kqueue();
+  _qio_queue = kqueue();
 
-  if (queue < 0)
-    return queue;
+  if (_qio_queue < 0)
+    return _qio_queue;
 
   return 0;
 }
@@ -763,13 +743,13 @@ QIO_API int32_t qio_init(uint64_t size) {
  */
 void resolve_qio_kevent(struct qio_kevent *ke, int64_t res, int64_t flags) {
   qd_t qd = (uintptr_t)ke->ke.udata;
-  struct qio_op_t op = v_qd_val_at(&qds, qd);
+  struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
 
   op.result = res < 0 ? -errno : res;
   op.flags = flags;
   op.done = true;
 
-  v_qd_set(&qds, qd, op);
+  v_qd_set(&_qio_qds, qd, op);
 }
 
 void resolve_polled(struct kevent *events, int nevents) {
@@ -779,7 +759,7 @@ void resolve_polled(struct kevent *events, int nevents) {
   // This atomically empties the pending_ops vector,
   // Allowing other threads to queue more pending operations
   // while this vector is processed.
-  v_kevent_drain(&pending_ops, &pending);
+  v_kevent_drain(&_qio_pending_ops, &pending);
 
   for (int j = 0; j < pending.len; j++) {
     struct qio_kevent *qioke = &pending.data[j];
@@ -861,13 +841,13 @@ void resolve_polled(struct kevent *events, int nevents) {
 
     /* Our pending operation found no matching event. */
     /* Re-queue it into the pending_ops vector. */
-    v_kevent_push(&pending_ops, *qioke);
+    v_kevent_push(&_qio_pending_ops, *qioke);
     continue;
 
   next:
     /* We ran our operation. Re-queue if necessary. */
     if (result < 0 && errno == EAGAIN || errno == EWOULDBLOCK)
-      v_kevent_push(&pending_ops, *qioke);
+      v_kevent_push(&_qio_pending_ops, *qioke);
     else if (result < 0 && errno == EINTR)
       resolve_qio_kevent(qioke, 0, 0);
     else
@@ -900,7 +880,7 @@ int flush_pending(struct kevent *events, int nevents) {
   // This atomically empties the pending_ops vector,
   // Allowing other threads to queue more pending operations
   // while this vector is processed.
-  v_kevent_drain(&pending_ops, &pending);
+  v_kevent_drain(&_qio_pending_ops, &pending);
 
   size_t new_events = 0;
 
@@ -972,7 +952,7 @@ int flush_pending(struct kevent *events, int nevents) {
 
       // Copy the event into this iterations list.
       memcpy(events + new_events++, &ke->ke, sizeof(struct kevent));
-      v_kevent_push(&pending_ops, *ke);
+      v_kevent_push(&_qio_pending_ops, *ke);
       continue;
     }
     }
@@ -982,12 +962,12 @@ int flush_pending(struct kevent *events, int nevents) {
   return new_events;
 };
 
-qd_t append_kevent(struct qio_kevent *src_kevent) {
+qd_t _qio_append_kevent(struct qio_kevent *src_kevent) {
   qd_t qid = qd_next();
-  assert(qds.len > 0);
+  assert(_qio_qds.len > 0);
 
   src_kevent->ke.udata = (void *)(intptr_t)qid;
-  v_kevent_push(&pending_ops, *src_kevent);
+  v_kevent_push(&_qio_pending_ops, *src_kevent);
 
   return qid;
 }
@@ -996,7 +976,7 @@ QIO_API int32_t qio_loop() {
   struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
 
   while (true) {
-    if (!pending_ops.len) {
+    if (!_qio_pending_ops.len) {
       thrd_sleep(&interval, nullptr);
       continue;
     }
@@ -1009,7 +989,7 @@ QIO_API int32_t qio_loop() {
     int nevents = flush_pending(events, total_events);
 
     // Poll each of these one-shot events.
-    nevents = kevent(queue, events, nevents, events, total_events, &t);
+    nevents = kevent(_qio_queue, events, nevents, events, total_events, &t);
 
     assert(nevents >= 0);
     if (nevents < 0)
@@ -1020,7 +1000,7 @@ QIO_API int32_t qio_loop() {
 }
 
 QIO_API qd_t qopen(const char *path) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_OPENAT,
 
       .ke.ident = AT_FDCWD,
@@ -1030,7 +1010,7 @@ QIO_API qd_t qopen(const char *path) {
 }
 
 QIO_API qd_t qopenat(qfd_t fd, const char *path) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_OPENAT,
 
       .ke.ident = fd,
@@ -1040,7 +1020,7 @@ QIO_API qd_t qopenat(qfd_t fd, const char *path) {
 };
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_READ,
 
       .ke.ident = fd,
@@ -1053,7 +1033,7 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 };
 
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_WRITE,
 
       .ke.ident = fd,
@@ -1066,7 +1046,7 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 };
 
 QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_ACCEPT,
 
       .ke.ident = fd,
@@ -1089,14 +1069,14 @@ QIO_API qd_t qsocket(enum qsock_type type) {
   default:
     return -1;
   }
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SOCKET,
       .socket.type = os_type,
   });
 };
 
 QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_CONNECT,
 
       .ke.ident = fd,
@@ -1106,7 +1086,7 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
 };
 
 QIO_API qd_t qclose(qfd_t fd) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_CLOSE,
 
       .ke.ident = fd,
@@ -1114,7 +1094,7 @@ QIO_API qd_t qclose(qfd_t fd) {
 };
 
 QIO_API qd_t qshutdown(qfd_t fd) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SHUTDOWN,
 
       .ke.ident = fd,
@@ -1124,7 +1104,7 @@ QIO_API qd_t qshutdown(qfd_t fd) {
 }
 
 QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_SEND,
 
       .ke.ident = fd,
@@ -1137,7 +1117,7 @@ QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
 };
 
 QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_RECV,
 
       .ke.ident = fd,
@@ -1150,7 +1130,7 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
 };
 
 QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_LISTEN,
 
       .ke.ident = fd,
@@ -1162,7 +1142,7 @@ QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
 }
 
 QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
-  return append_kevent(&(struct qio_kevent){
+  return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_RECV,
 
       .ke.ident = fd,

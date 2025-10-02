@@ -3522,7 +3522,7 @@ int main() {
       // This client slot has no connected client. Queue an accept.
       if (clients[i] == -1 && accepts[i] == -1) {
         accepts[i] = qaccept(server_sock, &addr);
-        printf("[INFO]: Queued accept for %i: %li\n", i, accepts[i]);
+        printf("[INFO]: Queued accept for %i: %i\n", i, accepts[i]);
         continue;
       }
 
@@ -3563,7 +3563,7 @@ int main() {
       // No recv is queued for this client.
       if (recvs[i] == -1) {
         recvs[i] = qrecv(client, MAX_MESSAGE_BYTES, (uint8_t *)buffer[i]);
-        printf("[INFO]: Queued recv for client %i: %li\n", i, recvs[i]);
+        printf("[INFO]: Queued recv for client %i: %i\n", i, recvs[i]);
         continue;
       }
 
@@ -3574,7 +3574,7 @@ int main() {
         /*printf("[INFO]: Checking queued recv %li\n", queued_recv);*/
         if (qd_status(queued_recv)) {
           int64_t n = qd_result(queued_recv);
-          printf("[INFO %i]: Queued recv %li is done: %li.\n", i, queued_recv,
+          printf("[INFO %i]: Queued recv %i is done: %li.\n", i, queued_recv,
                  n);
 
           // Client has requested a shutdown.
@@ -3596,7 +3596,7 @@ int main() {
           // If we aren't already sending, queue a send of our recv.
           if (sends[i] == -1) {
             sends[i] = qsend(client, n, (uint8_t *)buffer[i]);
-            printf("[INFO]: Queued send for client %i: %li\n", i, sends[i]);
+            printf("[INFO]: Queued send for client %i: %i\n", i, sends[i]);
             continue;
           }
         }
@@ -3609,7 +3609,7 @@ int main() {
         /*printf("[INFO]: Checking queued send %li\n", queued_recv);*/
         if (qd_status(queued_send)) {
           int64_t n = qd_result(queued_send);
-          printf("[INFO]: Queued send %li is done: %li.\n", queued_send, n);
+          printf("[INFO]: Queued send %i is done: %li.\n", queued_send, n);
 
           if (n < 0)
             return printf("[ERROR] Client send failed\n"), 1;
