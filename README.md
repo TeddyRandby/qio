@@ -123,16 +123,6 @@ qd_t qshutdown(qfd_t fd);
 
 qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
 qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
-
-/* %-------------%
- * | Coming Soon |
- * %-------------%
- *
- * qlisten
- * qbind
- * qmkdir 
- * qmkdirat
- */
 ```
 ## Examples
 For usage exapmles, it is best to check the `examples/` directory.
