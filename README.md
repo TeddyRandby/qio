@@ -91,8 +91,20 @@ void qio_destroy(uint64_t size);
 qd_t qopen(const char* path);
 qd_t qopenat(qfd_t fd, const char* path);
 
+qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]);
 qd_t qread(qfd_t fd, uint64_t offset, uint64_t n, uint8_t buf[n]);
-qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
+
+qd_t qclose(qfd_t fd);
+
+qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
+qd_t qbind(qfd_t fd, const struct qio_addr *addr);
+qd_t qlisten(qfd_t fd, uint32_t backlog);
+qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
+
+qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]);
+qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
+
+qd_t qshutdown(qfd_t fd);
 
 /*
 * %------------------%
@@ -100,7 +112,15 @@ qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
 * %------------------%
 * The qio_addr struct is used to when resolving hostnames for
 * qconnect, qbind, and for storing client address upon qaccept.
+*
 * qio_addrfrom resolves the hostname with 'getaddrinfo' on posix.
+*
+* This can look something like:
+*   struct qio_addr info;
+*   qio_addrfrom("www.google.com", 443, &info)
+*   qio_addrfrom("::1", 8080, &info)
+*
+* NOTE: This supports *only* IPv6. This is why localhost is "::1".
 */
 int qio_addrfrom(const char *restrict hostname, uint16_t port,
                          struct qio_addr *dst);
@@ -113,16 +133,6 @@ int qio_addrfrom(const char *restrict hostname, uint16_t port,
 */
 enum qsock_type { QSOCK_TCP, QSOCK_UDP };
 qd_t qsocket(enum qsock_type type);
-
-qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
-qd_t qbind(qfd_t fd, const struct qio_addr *addr);
-qd_t qlisten(qfd_t fd, uint32_t backlog);
-qd_t qaccept(qfd_t fd, struct qio_addr *addr_out);
-qd_t qclose(qfd_t fd);
-qd_t qshutdown(qfd_t fd);
-
-qd_t qsend(qfd_t fd, uint64_t n, uint8_t buf[n]);
-qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 ```
 ## Examples
 For usage exapmles, it is best to check the `examples/` directory.

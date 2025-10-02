@@ -74,7 +74,7 @@ QIO_API qd_t qopen(const char *path);
 QIO_API qd_t qopenat(qfd_t fd, const char *path);
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
-QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]);
+QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]);
 
 enum qsock_type { QSOCK_TCP, QSOCK_UDP };
 QIO_API qd_t qsocket(enum qsock_type type);
@@ -264,9 +264,12 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
 
   struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)addrinfo->ai_addr;
   assert(addrinfo->ai_addrlen <= sizeof(dst->addr));
+
   memcpy(&dst->addr, addrinfo->ai_addr, addrinfo->ai_addrlen);
+
   dst->len = addrinfo->ai_addrlen;
   dst->addr.sin6_port = htons(port);
+
   return freeaddrinfo(addrinfo), 0;
 }
 
@@ -496,7 +499,7 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
-QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_WRITE,
@@ -1032,7 +1035,7 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 };
 
-QIO_API qd_t qwrite(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_WRITE,
 
