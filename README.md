@@ -96,6 +96,16 @@ qd_t qread(qfd_t fd, uint64_t offset, uint64_t n, uint8_t buf[n]);
 
 qd_t qclose(qfd_t fd);
 
+/*
+* QIO combines the socket type\domain\protocol arguments that
+* are found in posix into configurations that are common and
+* cross-platform. These are TCP and UDP.
+*
+* Note: These use IPv6 exclusively. (For now)
+*/
+enum qsock_type { QSOCK_TCP, QSOCK_UDP };
+qd_t qsocket(enum qsock_type type);
+
 qd_t qconnect(qfd_t fd, const struct qio_addr *addr);
 qd_t qbind(qfd_t fd, const struct qio_addr *addr);
 qd_t qlisten(qfd_t fd, uint32_t backlog);
@@ -121,18 +131,12 @@ qd_t qshutdown(qfd_t fd);
 *   qio_addrfrom("::1", 8080, &info)
 *
 * NOTE: This supports *only* IPv6. This is why localhost is "::1".
+*
+* This function returns non-zero on error. If successful, the address information
+* of the resolved hostname and port is written to dst. This is sufficient for qconnect and qbind.
 */
 int qio_addrfrom(const char *restrict hostname, uint16_t port,
                          struct qio_addr *dst);
-
-/*
-* QIO combines the socket type\domain\protocol arguments that
-* are found in posix into configurations that are common and
-* cross-platform. These are TCP and UDP.
-* Note: These use IPv6 exclusively (for now, until it causes a problem).
-*/
-enum qsock_type { QSOCK_TCP, QSOCK_UDP };
-qd_t qsocket(enum qsock_type type);
 ```
 ## Examples
 For usage exapmles, it is best to check the `examples/` directory.
