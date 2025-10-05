@@ -19,7 +19,7 @@ int io_loop(void *initialized) {
   if (qio_init(QSIZE) < 0)
     return 1;
 
-  *(bool *)initialized = true;
+  *(_Atomic bool *)initialized = true;
 
   if (qio_loop() < 0)
     return qio_destroy(), 1;
@@ -3443,7 +3443,7 @@ int io_client(void *) {
 #define N_CLIENTS 10
 
 int main() {
-  bool initialized = false;
+  _Atomic bool initialized = false;
 
   thrd_t io_t;
   if (thrd_create(&io_t, io_loop, &initialized) != thrd_success)

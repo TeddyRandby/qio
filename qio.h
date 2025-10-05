@@ -117,7 +117,7 @@ mtx_t _qio_freelist_mtx;
  * these data structures need to be thread-safe and static.
  */
 static v_qd _qio_qds = {0};
-static uint64_t _qio_qd_free = -1;
+static uint32_t _qio_qd_free = (uint32_t) -1;
 
 /*
  * This function is *not* blocking. It will immediately return:
