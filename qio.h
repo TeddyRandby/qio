@@ -121,11 +121,12 @@
  * TODO:
  *  - The qd freelist is wrapped by a mutex to make it thread-safe.
  *    This could probably be improved by using an atomic qd as the *head of the list*,
- *    meaning we could atomically pop items out without having to lock. Maybe there is an entirely lock-fre
+ *    meaning we could atomically pop items out without having to lock. Maybe there is an entirely lock-free
  *    implementation we could use as well.
  *  - The windows implementation with IO completion ports.
  *  - Double check that qio_addrfrom is implemented correctly. I really don't know.
- *  - Further testing
+ *  - Further testing and benchmarking
+ *  - Implement file-permission flags for qopen/qopenat
  */
 
 #ifdef QIO_LINUX
