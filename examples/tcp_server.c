@@ -3416,7 +3416,8 @@ int io_client(void *) {
     return printf("[ERROR] Failed to recv: %s\n", strerror(-res)), 1;
 
   if (res != n)
-    return printf("[ERROR] Failed to completely receive: %i / %lu\n", res, n), 1;
+    return printf("[ERROR] Failed to completely receive: %i / %lu\n", res, n),
+           1;
 
   for (size_t i = 0; i < n; i++) {
     // Double check that our echo server echoes
@@ -3488,10 +3489,6 @@ int main() {
       return printf("[ERROR] Failed to spawn client"), 1;
   }
 
-  // socket address used to store client address
-  struct sockaddr_in client_address;
-  int client_address_len = 0;
-
   const int MAX_CONCURRENT_CLIENTS = 16;
   const int MAX_MESSAGE_BYTES = 4096;
 
@@ -3541,8 +3538,7 @@ int main() {
           assert(recvs[i] == -1);
           assert(sends[i] == -1);
 
-          printf("[INFO]: Client %i connected with ip address: %s\n", i,
-                 inet_ntoa(client_address.sin_addr));
+          printf("[INFO]: Client connected\n");
 
           // Clear the accept qid.
           qd_destroy(queued_accept);
@@ -3574,8 +3570,6 @@ int main() {
         /*printf("[INFO]: Checking queued recv %li\n", queued_recv);*/
         if (qd_status(queued_recv)) {
           int64_t n = qd_result(queued_recv);
-          printf("[INFO %i]: Queued recv %i is done: %li.\n", i, queued_recv,
-                 n);
 
           // Client has requested a shutdown.
           if (n == 0) {
@@ -3585,7 +3579,6 @@ int main() {
             qd_destroy(queued_recv);
 
             clients[i] = -1;
-            recvs[i] = -1;
 
             continue;
           }
@@ -3593,8 +3586,17 @@ int main() {
           if (n < 0)
             return printf("[ERROR] Client receive failed\n"), 1;
 
+          // The send that we queue uses the same buffer we just received in.
+          // This means we can't re-use that buffer for another recv until
+          // the send is complete.
+          // This is why we only mark recvs[i] = -1
+          // once the send is done.
+
           // If we aren't already sending, queue a send of our recv.
           if (sends[i] == -1) {
+            printf("[INFO %i]: Queued recv %i is done: %li.\n", i, queued_recv,
+                   n);
+
             sends[i] = qsend(client, n, (uint8_t *)buffer[i]);
             printf("[INFO]: Queued send for client %i: %i\n", i, sends[i]);
             continue;

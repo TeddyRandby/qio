@@ -3,6 +3,131 @@
 
 #define QIO_API static inline
 
+#include <stdatomic.h>
+#include <stdint.h>
+
+/*
+ *
+ *  ██████╗ ██╗ ██████╗
+ *  ██╔═══██╗██║██╔═══██╗
+ *  ██║   ██║██║██║   ██║
+ *  ██║▄▄ ██║██║██║   ██║
+ *  ╚██████╔╝██║╚██████╔╝
+ *   ╚══▀▀═╝ ╚═╝ ╚═════╝
+ *
+ * QIO is an experimental, cross-platform, and header-only library for performing
+ * asynchronous IO.
+ *
+ * Why write a new async-io library for c? libuv exists, and theres other
+ * options beyond that. So why create something new?
+ *
+ * - Even simpler and more minimal than libuv
+ * - No callback hell!
+ * - Threadsafe/multithreaded by *design*
+ *
+ * QIO implementation is comprised of two parts, io-operation *produces* and a
+ * single io-operation *consumer*.
+ *
+ * The relevant consumer functions are as follows:
+ *
+ *  int32_t qio_init(uint64_t size);
+ *
+ *    qio_init initializes qio's global state, and any operating-system specific
+ *    data structures that are necessary for qio to function. On linux, this
+ *    function creates the io_uring, and on macos it creates the kqueue.
+ *
+ *  int32_t qio_loop();
+ *
+ *    qio_loop is the event-loop that does all the io-work. This is a *blocking*
+ *    function. It will only return if qio encounters some internal error and can
+ *    *no longer* correctly do any io.
+ *
+ *  void qio_destroy(uint64_t size);
+ *
+ *    qio_destroy (theoretically) cleans up the data structures initialized by
+ *    qio_init. Honestly there isn't much point to this function, as the only
+ *    reason you'd ever clean this up in your application is if you're done doing
+ *    IO (and at this point youre about to exit the program anyway).
+ *
+ *    For this reason, qio_destroy is actually a no-op for now.
+ *
+ * The *producer* functions are designed to mirror the normal posix functions
+ * we're used to - just add a 'q' in front to make it async!
+ *
+ *  qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]);
+ *
+ *    Here is the corresponding async 'send' function, 'qsend'. The fundamental
+ *    difference between these queued functions and their synchronous counterparts
+ *    is that all the queued functions return a `qd_t`.
+ *
+ * This `qd_t` is the handle that corresponds to the `queued` operation. There
+ * are a few functions which operate on the qd (pronounced 'kid').
+ *
+ *  int8_t  qd_status(qd_t qd);
+ *
+ *    qd_status is *not* blocking, and checks on the status of a qd (a queued io
+ *    operation). It returns non-zero if the operation is complete, and zero if the
+ *    operation is in-progress.
+ *
+ *  int64_t qd_result(qd_t qd);
+ *
+ *    qd_result is *blocking*. It blocks the caller until the qd is complete,
+ *    and then returns the result of the operation (as if you called the
+ *    corresponding synchronous function).
+ *
+ *  int64_t qd_destroy(qd_t qd);
+ *
+ *    This function frees qio's data associated with the given qd. Practically, there
+ *    is no 'malloc' or 'free' actually happening.
+ *
+ *    All of qio's qds are allocated in a single contiguous vector. This vector grows
+ *    as more qds are needed, and never shrinks. qd_destroy marks slots in this vector as 'free',
+ *    which qio will re-use for later operations. This is implemented with an intrusive 'free list'.
+ *
+ *    All of the producer and qd helper functions are *thread-safe*.
+ *    QIO is designed for applications to spawn a single io-consumer thread,
+ *    and then call the producer functions from any number of other threads.
+ *
+ * Below is a typical IO loop function for qio. It uses an atomic bool* to notify parent thread when qio
+ * initialization is complete, and the application may begin queueing operations.
+ *
+ *  int io_loop(void *initialized) {
+ *    if (qio_init(QSIZE) < 0)
+ *      return 1;
+ *
+ *    *(_Atomic bool *)initialized = true;
+ *
+ *    if (qio_loop() < 0)
+ *      return qio_destroy(), 1;
+ *
+ *    return qio_destroy(), 0;
+ *  }
+ *
+ * Simply spawn a thread with this function using your os threads api (or the standard <threads.h>)
+ *
+ *  _Atomic bool initialized = false;
+ *  thrd_t io_t;
+ *  if (thrd_create(&io_t, io_loop, &initialized) != thrd_success)
+ *    // handle the error
+ *
+ *
+ * This repo includes two other header files in include/.
+ * The first is vector.h, a generic macro implementation of a vector data structure for c. This is used in QIO's internal data structures.
+ *
+ * The second is threads.h. Since the <threads.h> header is optional in the c-standard,
+ * not all platforms provide implementations. This header provides a cross-platform implementation if you are building for one of these
+ * lazy platforms <ahem, macos>.
+ *
+ * TODO:
+ *  - The qd freelist is wrapped by a mutex to make it thread-safe.
+ *    This could probably be improved by using an atomic qd as the *head of the list*,
+ *    meaning we could atomically pop items out without having to lock. Maybe there is an entirely lock-fre
+ *    implementation we could use as well.
+ *  - The windows implementation with IO completion ports.
+ *  - Double check that qio_addrfrom is implemented correctly. I really don't know.
+ *  - Further testing
+ */
+
 #ifdef QIO_LINUX
 
 #include <arpa/inet.h>
@@ -11,7 +136,6 @@
 #include <linux/io_uring.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -117,7 +241,7 @@ mtx_t _qio_freelist_mtx;
  * these data structures need to be thread-safe and static.
  */
 static v_qd _qio_qds = {0};
-static uint32_t _qio_qd_free = (uint32_t) -1;
+static uint32_t _qio_qd_free = (uint32_t)-1;
 
 /*
  * This function is *not* blocking. It will immediately return:
@@ -193,11 +317,11 @@ static inline qd_t _freelist_pop() {
   return qd;
 }
 
-QIO_API int qd_destroy(qd_t qd) {
+QIO_API int64_t qd_destroy(qd_t qd) {
   assert(qd < _qio_qds.len);
 
   /* Block until the operation is done. */
-  int32_t result = qd_result(qd);
+  int64_t result = qd_result(qd);
 
   assert(v_qd_val_at(&_qio_qds, qd).done);
 
@@ -275,8 +399,8 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
 
 static qfd_t _qio_ring;
 
-static uint32_t *_qio_sring_tail, *_qio_sring_head, *_qio_sring_mask, *_qio_sring_array,
-    *_qio_cring_head, *_qio_cring_tail, *_qio_cring_mask;
+static uint32_t *_qio_sring_tail, *_qio_sring_head, *_qio_sring_mask,
+    *_qio_sring_array, *_qio_cring_head, *_qio_cring_tail, *_qio_cring_mask;
 
 static struct io_uring_sqe *_qio_sqes;
 static struct io_uring_cqe *_qio_cqes;
@@ -823,7 +947,7 @@ void resolve_polled(struct kevent *events, int nevents) {
           goto next;
         }
         case QIO_KQ_ACCEPT: {
-          result = accept(qioke->ke.ident, &qioke->accept.addr_out->addr,
+          result = accept(qioke->ke.ident, (struct sockaddr*)&qioke->accept.addr_out->addr,
                           &qioke->accept.addr_out->len);
           goto next;
         }
