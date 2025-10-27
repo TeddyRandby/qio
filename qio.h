@@ -16,19 +16,20 @@
  *   ╚══▀▀═╝ ╚═╝ ╚═════╝
  *
  * QIO is an experimental, cross-platform, and header-only library for performing
- * asynchronous IO.
+ * asynchronous IO. It was designed to meet the needs of the gab programming language (https://gab-language.github.io/site/).
  *
  * Why write a new async-io library for c? libuv exists, and theres other
  * options beyond that. So why create something new?
  *
- * - Even simpler and more minimal than libuv
- * - No callback hell!
- * - Threadsafe/multithreaded by *design*
+ * - Simple and low-level api
+ * - No callback hell
+ * - Threadsafe
+ * - Header only
  *
- * QIO implementation is comprised of two parts, io-operation *produces* and a
+ * QIO's implementation is comprised of two parts: io-operation *producers* and a
  * single io-operation *consumer*.
  *
- * The relevant consumer functions are as follows:
+ * A consumer is an OS thread *dedicated* to performing IO operations. The relevant consumer functions are as follows:
  *
  *  int32_t qio_init(uint64_t size);
  *
@@ -47,16 +48,16 @@
  *    qio_destroy (theoretically) cleans up the data structures initialized by
  *    qio_init. Honestly there isn't much point to this function, as the only
  *    reason you'd ever clean this up in your application is if you're done doing
- *    IO (and at this point youre about to exit the program anyway).
+ *    IO (and at this point youre about to exit the io thread anyway).
  *
  *    For this reason, qio_destroy is actually a no-op for now.
  *
- * The *producer* functions are designed to mirror the normal posix functions
- * we're used to - just add a 'q' in front to make it async!
+ * A producer is any other thread which calls these producing functions. These functions are designed to mirror the normal posix functions
+ * you're already used to - just add a 'q' in front to make it async!
  *
  *  qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]);
  *
- *    Here is the corresponding async 'send' function, 'qsend'. The fundamental
+ *    qsend is the async version (producer) of the corresponding send function. The fundamental
  *    difference between these queued functions and their synchronous counterparts
  *    is that all the queued functions return a `qd_t`.
  *
@@ -84,12 +85,12 @@
  *    as more qds are needed, and never shrinks. qd_destroy marks slots in this vector as 'free',
  *    which qio will re-use for later operations. This is implemented with an intrusive 'free list'.
  *
- *    All of the producer and qd helper functions are *thread-safe*.
- *    QIO is designed for applications to spawn a single io-consumer thread,
- *    and then call the producer functions from any number of other threads.
+ * All of the producer and qd helper functions are *thread-safe*.
+ * QIO is designed for applications to spawn a single io-consumer thread,
+ * and then call the producer functions from any number of other threads.
  *
  * Below is a typical IO loop function for qio. It uses an atomic bool* to notify parent thread when qio
- * initialization is complete, and the application may begin queueing operations.
+ * initialization is complete, and then the application may begin calling producers.
  *
  *  int io_loop(void *initialized) {
  *    if (qio_init(QSIZE) < 0)
@@ -110,13 +111,23 @@
  *  if (thrd_create(&io_t, io_loop, &initialized) != thrd_success)
  *    // handle the error
  *
+ *  while (!initialized)
+ *    ; // wait
  *
- * This repo includes two other header files in include/.
- * The first is vector.h, a generic macro implementation of a vector data structure for c. This is used in QIO's internal data structures.
+ *  // Do all your io forever now, from whatever thread you want!
  *
- * The second is threads.h. Since the <threads.h> header is optional in the c-standard,
- * not all platforms provide implementations. This header provides a cross-platform implementation if you are building for one of these
- * lazy platforms <ahem, macos>.
+ * NOTE:
+ *  There is an additional type, a `qfd_t`, that the producing functions often use. This type is an abstraction over the OS's native
+ *  file/socket type. IE, it is an int on unix-like systems, and a HANDLE on windows (windows implementation incomplete).
+ *
+ * DEPENDENCIES:
+ *  This repo includes two other header files in include/.
+ *
+ *  The first is vector.h, a generic macro implementation of a vector data structure for c. This is used in QIO's internal data structures.
+ *
+ *  The second is threads.h. Since the <threads.h> header is optional in the c-standard,
+ *  not all platforms provide implementations. This header provides a cross-platform implementation if you are building for one of these
+ *  lazy platforms <ahem, macos>. QIO itself doesn't need <threads.h>, but it is useful for any cross-platform application which *would use* QIO.
  *
  * TODO:
  *  - The qd freelist is wrapped by a mutex to make it thread-safe.
@@ -127,6 +138,7 @@
  *  - Double check that qio_addrfrom is implemented correctly. I really don't know.
  *  - Further testing and benchmarking
  *  - Implement file-permission flags for qopen/qopenat
+ *  - Implement more producer functions. (Maybe the io_vec stuff would be useful?)
  */
 
 #ifdef QIO_LINUX
