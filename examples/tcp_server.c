@@ -1,15 +1,12 @@
-#include "../qio.h"
 
 #include <stdio.h>
 #include <string.h>
 
+#include "../qio.h"
+
 #define QSIZE 256
 
 const int server_port = 8077;
-
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 /*
  * A typical IO loop for qio. Uses a bool* to notify parent thread when qio
@@ -3381,62 +3378,116 @@ const char client_msg[] =
     "dui felis venenatis ultrices proin libero feugiat. Nisl malesuada lacinia "
     "integer nunc posuere ut hendrerit.";
 
+int send_completely(qfd_t socket, size_t n, const uint8_t buf[n]) {
+  qd_t qd = qsend(socket, n, buf);
+  int64_t res = qd_destroy(qd);
+
+  if (res < 0)
+    return res;
+
+  if (res < n) {
+    int64_t res2 = send_completely(socket, n - res, buf + res);
+
+    if (res2 < 0)
+      return res2;
+
+    return res + res2;
+  }
+
+  return res;
+}
+
+int recv_completely(qfd_t socket, size_t n, uint8_t buf[n]) {
+  qd_t qd = qrecv(socket, n, buf);
+  // printf("RECV QD: %i\n", qd);
+  int64_t res = qd_destroy(qd);
+
+  if (res < 0)
+    return res;
+
+  if (res < n) {
+    // printf("RECVING MORE: %lu / %lu\n", res);
+    int64_t res2 = recv_completely(socket, n - res, buf + res);
+
+    if (res2 < 0)
+      return res2;
+
+    return res + res2;
+  }
+
+  // printf("RECVING ENOUGH: %lu\n\n%.*s\n\n", res, (int)res, buf);
+  return res;
+}
+
 int io_client(void *) {
   int client_sock = qd_destroy(qsocket(QSOCK_TCP));
 
   if (client_sock < 0)
-    return printf("[ERROR] Failed to create server socket: %s.\n",
-                  strerror(-client_sock)),
+    return printf("[CLIENT ERROR] Failed to create client socket: %i.\n",
+                  client_sock),
            1;
 
   struct qio_addr addr;
 
   if (qio_addrfrom("::1", server_port, &addr) < 0)
-    return printf("[ERROR] Failed to create address\n"), 1;
+    return printf("[CLIENT ERROR] Failed to create address\n"), 1;
 
   int res = qd_destroy(qconnect(client_sock, &addr));
 
   if (res < 0)
-    return printf("[ERROR] Failed to connect: %s\n", strerror(-res)), 1;
+    return printf("[CLIENT ERROR] Failed to connect: %i\n", res), 1;
+
+  printf("[CLIENT INFO] Connected.\n");
 
   const size_t n = sizeof(client_msg);
-  const char buf[n];
 
-  res = qd_destroy(qsend(client_sock, n, (uint8_t *)client_msg));
-
-  if (res < 0)
-    return printf("[ERROR] Failed to send: %s\n", strerror(-res)), 1;
-
-  if (res != n)
-    return printf("[ERROR] Failed to completely send: %i / %lu\n", res, n), 1;
-
-  res = qd_destroy(qrecv(client_sock, n, (uint8_t *)buf));
+  res = send_completely(client_sock, n, (uint8_t *)client_msg);
 
   if (res < 0)
-    return printf("[ERROR] Failed to recv: %s\n", strerror(-res)), 1;
+    return printf("[CLIENT ERROR] Failed to send: %i\n", res), 1;
 
   if (res != n)
-    return printf("[ERROR] Failed to completely receive: %i / %lu\n", res, n),
+    printf("[CLIENT ERROR] Failed to completely send on qd: %i / %lu\n", res,
+           n);
+
+  printf("[CLIENT INFO] Completely sent: %i\n", res);
+
+  uint8_t buf[n];
+  memset(buf, 0, sizeof(buf));
+  res = recv_completely(client_sock, n, buf);
+
+  if (res < 0)
+    return printf("[CLIENT ERROR] Failed to recv: %i\n", res), 1;
+
+  if (res != n)
+    return printf("[CLIENT ERROR] Failed to completely receive: %i / %lu\n",
+                  res, n),
            1;
 
-  for (size_t i = 0; i < n; i++) {
+  printf("[CLIENT INFO] Completely read: %i\n", res);
+
+  for (size_t i = 0; i < res; i++) {
     // Double check that our echo server echoes
     if (buf[i] != client_msg[i])
-      return printf("[ERROR] Echo server sent mismstched byte %c, but expected "
-                    "%c\n",
-                    buf[i], client_msg[i]),
-             1;
+    return printf("[CLIENT ERROR] Echo server sent mismstched byte at "
+                  "position %lu: %c,(%i), but "
+                  "expected "
+                  "%c(%i)\n",
+                  i, buf[i], buf[i], client_msg[i], client_msg[i]),
+           1;
   }
 
   res = qd_destroy(qshutdown(client_sock));
 
+  printf("[CLIENT INFO] Completely shutdown: %i\n", res);
+
   if (res < 0)
-    return printf("[ERROR] Failed to close: %s\n", strerror(-res)), 1;
+    return printf("[ERROR] Failed to shutdown: %i\n", res), 1;
 
   res = qd_destroy(qclose(client_sock));
 
   if (res < 0)
-    return printf("[ERROR] Failed to close: %s\n", strerror(-res)), 1;
+    return printf("[ERROR] Failed to close: %i\n", res), 1;
 
   return 0;
 }
@@ -3456,8 +3507,7 @@ int main() {
   int server_sock = qd_result(qsocket(QSOCK_TCP));
 
   if (server_sock < 0)
-    return printf("[ERROR] Failed to create server socket: %s.\n",
-                  strerror(-server_sock)),
+    return printf("[ERROR] Failed to create server socket: %i.\n", server_sock),
            1;
 
   struct qio_addr addr;
@@ -3470,7 +3520,7 @@ int main() {
   int res = qd_result(bqd);
 
   if (res < 0)
-    return printf("[ERROR] Could not bind socket: %s\n", strerror(-res)), 1;
+    return printf("[ERROR] Could not bind socket: %i\n", res), 1;
 
   qd_destroy(bqd);
 
@@ -3538,7 +3588,8 @@ int main() {
           assert(recvs[i] == -1);
           assert(sends[i] == -1);
 
-          printf("[INFO]: Client connected\n");
+          printf("[INFO]: Client connected on qd(%i): %li\n", queued_accept,
+                 client);
 
           // Clear the accept qid.
           qd_destroy(queued_accept);
@@ -3598,7 +3649,7 @@ int main() {
                    n);
 
             sends[i] = qsend(client, n, (uint8_t *)buffer[i]);
-            printf("[INFO]: Queued send for client %i: %i\n", i, sends[i]);
+            printf("[INFO %i]: Queued send: %i\n", i, sends[i]);
             continue;
           }
         }
@@ -3611,12 +3662,13 @@ int main() {
         /*printf("[INFO]: Checking queued send %li\n", queued_recv);*/
         if (qd_status(queued_send)) {
           int64_t n = qd_result(queued_send);
-          printf("[INFO]: Queued send %i is done: %li.\n", queued_send, n);
+          printf("[INFO %i]: Queued send %i is done: %li (%s).\n", i,
+                 queued_send, n, n > (int64_t)0 ? "valid" : "invalid");
 
           if (n < 0)
             return printf("[ERROR] Client send failed\n"), 1;
 
-          printf("[INFO]: Sent %li bytes to client %i\n", n, i);
+          printf("[INFO %i]: Sent %li bytes\n", i, n);
 
           // This client is ready for a new recv/send cycle.
           qd_destroy(sends[i]);
@@ -3629,7 +3681,7 @@ int main() {
     }
   }
 
-  close(server_sock);
+  qd_destroy(qclose(server_sock));
 
   thrd_join(io_t, nullptr);
 

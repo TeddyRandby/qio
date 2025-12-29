@@ -13,8 +13,11 @@ int io_loop(void *initialized) {
 
   *(bool *)initialized = true;
 
-  if (qio_loop() < 0)
-    return qio_destroy(), 1;
+  if (qio_loop() < 0) {
+    printf("[IO] Loop failed.\n");
+  } else {
+    printf("[IO] Ended successfully.\n");
+  }
 
   return qio_destroy(), 0;
 }
@@ -23,7 +26,7 @@ int io_loop(void *initialized) {
 #define NQIDS 1000
 
 int main() {
-  bool initialized = false;
+  _Atomic bool initialized = false;
 
   thrd_t t;
   if (thrd_create(&t, io_loop, &initialized) != thrd_success)
@@ -32,22 +35,28 @@ int main() {
   while (!initialized)
     ;
 
+  printf("[MAIN] Beginning work.\n");
+
   qd_t file_qid = qopen("README.md");
 
-  int fd = qd_result(file_qid);
+  printf("[MAIN] Began opening file: %i.\n", file_qid);
+
+  qfd_t fd = qd_result(file_qid);
+
+  printf("[MAIN] Opened file: %lu\n", fd);
 
   uint8_t buf[BUF_SIZE];
   qd_t qids[NQIDS];
 
   for (int i = 0; i < NQIDS; i++) {
     qids[i] = qread(fd, sizeof(buf), buf);
-    printf("[QID %li] Queued read of %lu.\n", qids[i], sizeof(buf));
+    printf("[QID %i] Queued read of %lu.\n", qids[i], sizeof(buf));
   }
 
   for (int i = 0; i < NQIDS; i++) {
     qd_t qid = qids[i];
     int64_t result = qd_result(qid);
-    printf("[QID %li] Read got: %li.\n", qid, result);
+    printf("[QID %i] Read got: %li.\n", qid, result);
   }
 
   thrd_join(t, nullptr);

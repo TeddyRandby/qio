@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 /*
- *
  *  ██████╗ ██╗ ██████╗
  *  ██╔═══██╗██║██╔═══██╗
  *  ██║   ██║██║██║   ██║
@@ -15,8 +14,9 @@
  *  ╚██████╔╝██║╚██████╔╝
  *   ╚══▀▀═╝ ╚═╝ ╚═════╝
  *
- * QIO is an experimental, cross-platform, and header-only library for performing
- * asynchronous IO. It was designed to meet the needs of the gab programming language (https://gab-language.github.io/site/).
+ * QIO is an experimental, cross-platform, and header-only library for
+ * performing asynchronous IO. It was designed to meet the needs of the gab
+ * programming language (https://gab-language.github.io/site/).
  *
  * Why write a new async-io library for c? libuv exists, and theres other
  * options beyond that. So why create something new?
@@ -26,10 +26,11 @@
  * - Threadsafe
  * - Header only
  *
- * QIO's implementation is comprised of two parts: io-operation *producers* and a
- * single io-operation *consumer*.
+ * QIO's implementation is comprised of two parts: io-operation *producers* and
+ * a single io-operation *consumer*.
  *
- * A consumer is an OS thread *dedicated* to performing IO operations. The relevant consumer functions are as follows:
+ * A consumer is an OS thread *dedicated* to performing IO operations. The
+ * relevant consumer functions are as follows:
  *
  *  int32_t qio_init(uint64_t size);
  *
@@ -40,26 +41,27 @@
  *  int32_t qio_loop();
  *
  *    qio_loop is the event-loop that does all the io-work. This is a *blocking*
- *    function. It will only return if qio encounters some internal error and can
- *    *no longer* correctly do any io.
+ *    function. It will only return if qio encounters some internal error and
+ * can *no longer* correctly do any io.
  *
- *  void qio_destroy(uint64_t size);
+ *  void qio_destroy();
  *
  *    qio_destroy (theoretically) cleans up the data structures initialized by
  *    qio_init. Honestly there isn't much point to this function, as the only
- *    reason you'd ever clean this up in your application is if you're done doing
- *    IO (and at this point youre about to exit the io thread anyway).
+ *    reason you'd ever clean this up in your application is if you're done
+ * doing IO (and at this point youre about to exit the io thread anyway).
  *
  *    For this reason, qio_destroy is actually a no-op for now.
  *
- * A producer is any other thread which calls these producing functions. These functions are designed to mirror the normal posix functions
- * you're already used to - just add a 'q' in front to make it async!
+ * A producer is any other thread which calls these producing functions. These
+ * functions are designed to mirror the normal posix functions you're already
+ * used to - just add a 'q' in front to make it async!
  *
  *  qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]);
  *
- *    qsend is the async version (producer) of the corresponding send function. The fundamental
- *    difference between these queued functions and their synchronous counterparts
- *    is that all the queued functions return a `qd_t`.
+ *    qsend is the async version (producer) of the corresponding send function.
+ * The fundamental difference between these queued functions and their
+ * synchronous counterparts is that all the queued functions return a `qd_t`.
  *
  * This `qd_t` is the handle that corresponds to the `queued` operation. There
  * are a few functions which operate on the qd (pronounced 'kid').
@@ -67,8 +69,8 @@
  *  int8_t  qd_status(qd_t qd);
  *
  *    qd_status is *not* blocking, and checks on the status of a qd (a queued io
- *    operation). It returns non-zero if the operation is complete, and zero if the
- *    operation is in-progress.
+ *    operation). It returns non-zero if the operation is complete, and zero if
+ * the operation is in-progress.
  *
  *  int64_t qd_result(qd_t qd);
  *
@@ -78,19 +80,21 @@
  *
  *  int64_t qd_destroy(qd_t qd);
  *
- *    This function frees qio's data associated with the given qd. Practically, there
- *    is no 'malloc' or 'free' actually happening.
+ *    This function frees qio's data associated with the given qd. Practically,
+ * there is no 'malloc' or 'free' actually happening.
  *
- *    All of qio's qds are allocated in a single contiguous vector. This vector grows
- *    as more qds are needed, and never shrinks. qd_destroy marks slots in this vector as 'free',
- *    which qio will re-use for later operations. This is implemented with an intrusive 'free list'.
+ *    All of qio's qds are allocated in a single contiguous vector. This vector
+ * grows as more qds are needed, and never shrinks. qd_destroy marks slots in
+ * this vector as 'free', which qio will re-use for later operations. This is
+ * implemented with an intrusive 'free list'.
  *
  * All of the producer and qd helper functions are *thread-safe*.
  * QIO is designed for applications to spawn a single io-consumer thread,
  * and then call the producer functions from any number of other threads.
  *
- * Below is a typical IO loop function for qio. It uses an atomic bool* to notify parent thread when qio
- * initialization is complete, and then the application may begin calling producers.
+ * Below is a typical IO loop function for qio. It uses an atomic bool* to
+ * notify parent thread when qio initialization is complete, and then the
+ * application may begin calling producers.
  *
  *  int io_loop(void *initialized) {
  *    if (qio_init(QSIZE) < 0)
@@ -104,7 +108,8 @@
  *    return qio_destroy(), 0;
  *  }
  *
- * Simply spawn a thread with this function using your os threads api (or the standard <threads.h>)
+ * Simply spawn a thread with this function using your os threads api (or the
+ * standard <threads.h>)
  *
  *  _Atomic bool initialized = false;
  *  thrd_t io_t;
@@ -117,70 +122,38 @@
  *  // Do all your io forever now, from whatever thread you want!
  *
  * NOTE:
- *  There is an additional type, a `qfd_t`, that the producing functions often use. This type is an abstraction over the OS's native
- *  file/socket type. IE, it is an int on unix-like systems, and a HANDLE on windows (windows implementation incomplete).
+ *  There is an additional type, a `qfd_t`, that the producing functions often
+ * use. This type is an abstraction over the OS's native file/socket type. IE,
+ * it is an int on unix-like systems, and a HANDLE on windows (windows
+ * implementation incomplete).
  *
  * DEPENDENCIES:
  *  This repo includes two other header files in include/.
  *
- *  The first is vector.h, a generic macro implementation of a vector data structure for c. This is used in QIO's internal data structures.
+ *  The first is vector.h, a generic macro implementation of a vector data
+ * structure for c. This is used in QIO's internal data structures.
  *
- *  The second is threads.h. Since the <threads.h> header is optional in the c-standard,
- *  not all platforms provide implementations. This header provides a cross-platform implementation if you are building for one of these
- *  lazy platforms <ahem, macos>. QIO itself doesn't need <threads.h>, but it is useful for any cross-platform application which *would use* QIO.
+ *  The second is threads.h. Since the <threads.h> header is optional in the
+ * c-standard, not all platforms provide implementations. This header provides a
+ * cross-platform implementation if you are building for one of these lazy
+ * platforms <ahem, macos>. QIO itself doesn't need <threads.h>, but it is
+ * useful for any cross-platform application which *would use* QIO.
  *
  * TODO:
  *  - The qd freelist is wrapped by a mutex to make it thread-safe.
- *    This could probably be improved by using an atomic qd as the *head of the list*,
- *    meaning we could atomically pop items out without having to lock. Maybe there is an entirely lock-free
- *    implementation of the freelist we could use as well.
+ *    This could probably be improved by using an atomic qd as the *head of the
+ * list*, meaning we could atomically pop items out without having to lock.
+ * Maybe there is an entirely lock-free implementation of the freelist we could
+ * use as well.
  *  - The windows implementation with IO completion ports.
- *  - Double check that qio_addrfrom is implemented correctly. I really don't know.
+ *  - Double check that qio_addrfrom is implemented correctly. I really don't
+ * know.
  *  - Further testing and benchmarking
  *  - Implement file-permission flags for qopen/qopenat
- *  - Implement more producer functions. (Maybe the io_vec stuff would be useful?)
+ *  - Implement more producer functions. (Maybe the io_vec stuff would be
+ * useful?)
+ *  - Implement cross-platform error string retrieval. (Wrapping strerror, etc)
  */
-
-#ifdef QIO_LINUX
-
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <linux/io_uring.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-#include <sys/uio.h>
-#include <unistd.h>
-
-/*
- * Abstraction over os file/pipe/console/socket types.
- */
-typedef int qfd_t;
-
-#elifdef QIO_MACOS
-
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/event.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-typedef int qfd_t;
-
-#elifdef QIO_WINDOWS
-
-#include <windows.h>
-/* Implemented using IO Completion Ports */
-
-typedef HANDLE qfd_t;
-#else
-typedef uint64_t qfd_t;
-
-#endif
 
 /*
  * A qid (pronounced 'kid') is a handle representing one IO operation.
@@ -189,6 +162,11 @@ typedef uint64_t qfd_t;
  *  - Get the result of its operation
  */
 typedef int32_t qd_t;
+
+/*
+ * An abstraction over an os-specific file-descriptor.
+ */
+typedef int64_t qfd_t;
 
 /*
  * Initialize QIO. This should only be called *once* per thread.
@@ -228,13 +206,15 @@ QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]);
 struct qio_op_t {
   /* Has the io op completed? */
   int8_t done;
-  /* OS return values */
-  int64_t result;
-  uint64_t flags;
-  /* User Data */
+
+  /*
+   * BOO wasted space
+   */
+
   union {
-    void *up;
-    uint64_t ud;
+    /* OS return values */
+    int64_t result;
+    /* Next free item in the free list. */
     qd_t next_free;
   };
 };
@@ -280,21 +260,6 @@ QIO_API int64_t qd_result(qd_t qd) {
   return v_qd_val_at(&_qio_qds, qd).result;
 }
 
-QIO_API void qd_setud(qd_t qd, uint64_t ud) {
-  assert(qd < _qio_qds.len);
-
-  struct qio_op_t v = v_qd_val_at(&_qio_qds, qd);
-
-  v.ud = ud;
-
-  v_qd_set(&_qio_qds, qd, v);
-}
-
-QIO_API uint64_t qd_getud(qd_t qd, uint64_t ud) {
-  assert(qd < _qio_qds.len);
-  return v_qd_val_at(&_qio_qds, qd).ud;
-}
-
 static const uint32_t negative_one = -1;
 static const struct qio_op_t destroyed = {.next_free = negative_one};
 
@@ -308,6 +273,7 @@ static inline void _freelist_push(qd_t qd) {
   while (op.next_free != negative_one) {
     p_qd = op.next_free;
     op = v_qd_val_at(&_qio_qds, op.next_free);
+    assert(!op.done);
   }
 
   assert(op.next_free == negative_one);
@@ -326,6 +292,8 @@ static inline qd_t _freelist_pop() {
 
   struct qio_op_t op = v_qd_val_at(&_qio_qds, _qio_qd_free);
   _qio_qd_free = op.next_free;
+
+  v_qd_set(&_qio_qds, qd, (struct qio_op_t){});
 
   return qd;
 }
@@ -354,8 +322,14 @@ QIO_API qd_t qd_next() {
   if (_qio_qd_free != negative_one) {
     qd_t qd = _freelist_pop();
 
-    if (qd != negative_one)
-      return mtx_unlock(&_qio_freelist_mtx), qd;
+    if (qd != negative_one) {
+
+      v_qd_set(&_qio_qds, qd, (struct qio_op_t){});
+
+      mtx_unlock(&_qio_freelist_mtx);
+
+      return qd;
+    }
   }
 
   qd_t qd = v_qd_push(&_qio_qds, (struct qio_op_t){});
@@ -373,6 +347,29 @@ QIO_API qd_t qd_next() {
 #endif
 
 #ifdef QIO_LINUX
+
+/*
+ * Linux implementation using io_uring.
+ *
+ * A thread-safe vector of submission-queue-entries (sqe)
+ * holds the requests made by producers.
+ *
+ * The consumer wakes up, drains *all* entries, and queues
+ * as many as it can to the ring. It then checks for any
+ * completion-queue-entries, and resolves these qds.
+ */
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/io_uring.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <unistd.h>
+
 #define io_uring_smp_store_release(p, v)                                       \
   atomic_store_explicit((_Atomic typeof(*(p)) *)(p), (v), memory_order_release)
 
@@ -508,7 +505,6 @@ QIO_API int32_t qio_loop() {
 
       assert(qid < _qio_qds.len);
       assert(v_qd_val_at(&_qio_qds, qid).done == false);
-      assert(v_qd_val_at(&_qio_qds, qid).flags == 0);
       assert(v_qd_val_at(&_qio_qds, qid).result == 0);
       /*
        * Perform this via a set for two resons:
@@ -521,7 +517,6 @@ QIO_API int32_t qio_loop() {
       v_qd_set(&_qio_qds, qid,
                (struct qio_op_t){
                    .result = cqe->res == -EINTR ? 0 : cqe->res,
-                   .flags = cqe->flags,
                    .done = true,
                });
 
@@ -740,6 +735,34 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
 
 #elifdef QIO_MACOS
 
+/*
+ * The MACOS implementation uses kqueue.
+ *
+ * There is a similar thread-safe vector of kqueue- operations that our
+ * producers append to.
+ *
+ * The consumer loopwakes up, drains the vector, and processes the requests.
+ *
+ * Some requests don't need to wait for IO (such as qsocket, qopen, etc).
+ *
+ * These requests are completed when the are processed at this point.
+ *
+ * Requests that *do* need to wait for IO (qsend, qrecv, qwrite, qread) are
+ * collected and sent to the kqueue, to track when the fd is readable/writable.
+ *
+ * When we get an event from kequeue, we complete the operation we were waiting
+ * on.
+ *
+ */
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/event.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 struct qio_addr {
   struct sockaddr_in6 addr;
   socklen_t len;
@@ -858,6 +881,9 @@ int setfd_nonblock(int fd) {
 }
 
 QIO_API int32_t qio_init(uint64_t size) {
+  v_qd_create(&_qio_qds, QIO_INTERNAL_QUEUE_INITIAL_LEN);
+  mtx_init(&_qio_freelist_mtx, mtx_plain);
+
   v_kevent_create(&_qio_pending_ops, QIO_INTERNAL_QUEUE_INITIAL_LEN);
 
   int res;
@@ -960,7 +986,8 @@ void resolve_polled(struct kevent *events, int nevents) {
           goto next;
         }
         case QIO_KQ_ACCEPT: {
-          result = accept(qioke->ke.ident, (struct sockaddr*)&qioke->accept.addr_out->addr,
+          result = accept(qioke->ke.ident,
+                          (struct sockaddr *)&qioke->accept.addr_out->addr,
                           &qioke->accept.addr_out->len);
           goto next;
         }
@@ -1290,6 +1317,706 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
       .ke.filter = EVFILT_READ,
 
       .bind.addr = addr,
+  });
+}
+#elifdef QIO_WINDOWS
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+struct qiocpe_ov {
+  OVERLAPPED ov;
+  qd_t qd;
+};
+
+struct qio_cpevent {
+  qd_t qd;
+  struct qiocpe_ov *ov;
+
+  enum {
+    QIO_CP_OPENAT,
+    QIO_CP_READ,
+    QIO_CP_WRITE,
+    QIO_CP_SOCKET,
+    QIO_CP_ACCEPT,
+    QIO_CP_LISTEN,
+    QIO_CP_BIND,
+    QIO_CP_CONNECT,
+    QIO_CP_CLOSE,
+    QIO_CP_SHUTDOWN,
+    QIO_CP_SEND,
+    QIO_CP_RECV,
+  } op;
+
+  union {
+    struct {
+      const char *path;
+      qfd_t root;
+    } openat;
+
+    struct {
+      qfd_t fd;
+      uint64_t n;
+      uint8_t *buf;
+    } read;
+
+    struct {
+      qfd_t fd;
+      uint64_t n;
+      const uint8_t *buf;
+    } write;
+
+    struct {
+      int type;
+    } socket;
+
+    struct {
+      qfd_t fd;
+      struct qio_addr *addr_out;
+    } accept;
+
+    struct {
+      qfd_t fd;
+      const struct qio_addr *addr;
+    } connect;
+
+    struct {
+      qfd_t fd;
+      const struct qio_addr *addr;
+    } bind;
+
+    struct {
+      qfd_t fd;
+      uint32_t backlog;
+    } listen;
+
+    struct {
+      qfd_t fd;
+    } close;
+
+    struct {
+      qfd_t fd;
+      int32_t how;
+    } shutdown;
+
+    struct {
+      qfd_t fd;
+      uint64_t n;
+      const uint8_t *buf;
+    } send;
+
+    struct {
+      qfd_t fd;
+      uint64_t n;
+      uint8_t *buf;
+    } recv;
+  };
+};
+
+#define T struct qio_cpevent
+#define NAME cpevent
+#define V_CONCURRENT
+#include "vector.h"
+
+#define QFD_INVALID_HANDLE ((uintptr_t)INVALID_HANDLE_VALUE)
+
+v_cpevent _qio_pending_ops;
+
+qfd_t _qio_completion_port;
+
+QIO_API int32_t qio_init(uint64_t size) {
+  v_qd_create(&_qio_qds, QIO_INTERNAL_QUEUE_INITIAL_LEN);
+  mtx_init(&_qio_freelist_mtx, mtx_plain);
+
+  v_cpevent_create(&_qio_pending_ops, QIO_INTERNAL_QUEUE_INITIAL_LEN);
+
+  WORD wVersionRequested;
+  WSADATA wsaData;
+  int err;
+
+  /* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+  wVersionRequested = MAKEWORD(2, 2);
+
+  err = WSAStartup(wVersionRequested, &wsaData);
+  if (err != 0)
+    return err;
+
+  if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
+    /* Tell the user that we could not find a usable */
+    /* WinSock DLL.                                  */
+    printf("Could not find a usable version of Winsock.dll\n");
+    WSACleanup();
+    return 1;
+  }
+
+  // Create an IO completion port without associating it with a file handle.
+  _qio_completion_port =
+      (uintptr_t)CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
+
+  if (_qio_completion_port == QFD_INVALID_HANDLE)
+    return 1;
+
+  return 0;
+}
+
+void resolve_qio_cpov_event(struct qiocpe_ov *ov, int64_t res) {
+  qd_t qd = ov->qd;
+
+  struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
+  assert(!op.done);
+  assert(!op.result);
+
+  free(ov);
+
+  v_qd_set(&_qio_qds, qd, (struct qio_op_t){.done = true, .result = res});
+}
+
+/**
+ * Finish the qd associated with the given completionkey.
+ */
+void resolve_qio_cpevent(struct qio_cpevent *cpe, int64_t res) {
+  qd_t qd = cpe->qd;
+
+  struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
+  assert(!op.done);
+  assert(!op.result);
+
+  v_qd_set(&_qio_qds, qd, (struct qio_op_t){.done = true, .result = res});
+}
+
+/*
+ * WINDOWS ISSUE:
+ *
+ * For some reason, it appears that RECV events aren't coming through
+ * on the IO completion port. No idea why.
+ *
+ */
+
+void resolve_polled(LPOVERLAPPED_ENTRY events, ULONG nevents) {
+  for (int i = 0; i < nevents; i++) {
+    OVERLAPPED_ENTRY *ole = &events[i];
+    struct qiocpe_ov *ov = ole->lpOverlapped;
+    qd_t qd = ov->qd;
+
+    resolve_qio_cpov_event(ov, ole->dwNumberOfBytesTransferred);
+  }
+}
+
+struct qio_addr {
+  struct sockaddr_in6 addr;
+  socklen_t len;
+};
+
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+                         struct qio_addr *dst) {
+  struct addrinfo *addrinfo;
+
+  struct addrinfo hints = {.ai_family = AF_INET6};
+  // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
+  // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
+
+  int s = getaddrinfo(src, nullptr, &hints, &addrinfo);
+  if (s != 0)
+    return s;
+
+  if (addrinfo == nullptr)
+    return -1;
+
+  struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)addrinfo->ai_addr;
+
+  assert(addrinfo->ai_addrlen <= sizeof(dst->addr));
+  memcpy(&dst->addr, addrinfo->ai_addr, addrinfo->ai_addrlen);
+
+  dst->len = addrinfo->ai_addrlen;
+  dst->addr.sin6_port = htons(port);
+
+  return freeaddrinfo(addrinfo), 0;
+}
+
+void debug_recv(DWORD dwError, DWORD cbTransferred,
+                LPWSAOVERLAPPED lpOverlapped, DWORD dwFlags) {
+  printf("[DEBUG] RECV COMPLETION: err (%li), bytes (%li)\n", dwError,
+         cbTransferred);
+}
+
+/**
+ * Flush up to nevents from the pending operation vector.
+ *
+ * Some operations can be immediately processed here:
+ *  - OPENAT
+ *  - SOCKET
+ *  - CONNECT
+ *  - CLOSE
+ *
+ * Other operations need to wait for an FD to be readable or writable.
+ * In this case, we queue a kevent.
+ *
+ * These events will be processed by a sister function. If an event
+ * is successful, we try to complete the operation.
+ *
+ * Each Async operation which needs it allocates its own OVERLAPPED struct.
+ *
+ * This is because the address of the struct has to be stable, and the *array
+ * the struct is in* might be resized at any point.
+ *
+ * */
+void flush_pending() {
+  v_cpevent pending;
+
+  // Drain the pending ops into our local vector.
+  // This atomically empties the pending_ops vector,
+  // Allowing other threads to queue more pending operations
+  // while this vector is processed.
+  v_cpevent_drain(&_qio_pending_ops, &pending);
+
+  for (size_t i = 0; i < pending.len; i++) {
+    // We can safely index data here, as no other code or thread
+    // has access to this pending vector.
+    struct qio_cpevent *cpe = &pending.data[i];
+
+    switch (cpe->op) {
+    case QIO_CP_OPENAT: {
+      // TODO: Properly use the handle in openat.handle as a parent directory
+      // to mimic the behavior of openat
+      // Might need to use NtCreateFile instead
+      HANDLE fd = CreateFileA(cpe->openat.path, GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              OPEN_ALWAYS, FILE_FLAG_OVERLAPPED, NULL);
+
+      if (fd == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        assert(err > 0);
+        resolve_qio_cpevent(cpe, -err);
+        continue;
+      }
+
+      // Assert the handle fits in a 64-bit int.
+      // Sanity check here.
+      assert((uintptr_t)fd < INT64_MAX);
+
+      qfd_t qfd = (int64_t)(uintptr_t)fd;
+
+      // Associate this handle with the completion port.
+      HANDLE res = CreateIoCompletionPort(
+          fd, (HANDLE)(uintptr_t)_qio_completion_port, qfd, 0);
+
+      assert(res == _qio_completion_port);
+
+      resolve_qio_cpevent(cpe, qfd);
+      continue;
+    }
+    case QIO_CP_SOCKET: {
+      SOCKET fd = socket(AF_INET6, cpe->socket.type, 0);
+
+      if (fd == INVALID_SOCKET) {
+        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        continue;
+      }
+
+      // Another sanity check
+      assert((uintptr_t)fd < INT64_MAX);
+
+      qfd_t qfd = (int64_t)(uintptr_t)fd;
+
+      HANDLE res = CreateIoCompletionPort(
+          (HANDLE)fd, (HANDLE)(uintptr_t)_qio_completion_port, qfd, 0);
+
+      assert(res == _qio_completion_port);
+
+      // Change the IO mode of the socket to non-blocking
+      u_long iMode = 1;
+      int iResult = ioctlsocket(fd, FIONBIO, &iMode);
+      if (iResult != NO_ERROR)
+        resolve_qio_cpevent(cpe, -iResult);
+
+      resolve_qio_cpevent(cpe, qfd);
+      continue;
+    }
+    case QIO_CP_CLOSE: {
+      int res = closesocket(cpe->close.fd);
+
+      if (res == SOCKET_ERROR)
+        resolve_qio_cpevent(cpe, -WSAGetLastError());
+      else
+        resolve_qio_cpevent(cpe, res);
+
+      continue;
+    }
+    case QIO_CP_SHUTDOWN: {
+      int res = shutdown(cpe->shutdown.fd, cpe->shutdown.how);
+
+      if (res == SOCKET_ERROR)
+        resolve_qio_cpevent(cpe, -WSAGetLastError());
+      else
+        resolve_qio_cpevent(cpe, res);
+
+      continue;
+    }
+    case QIO_CP_LISTEN: {
+      int res = listen(cpe->listen.fd, cpe->listen.backlog);
+
+      if (res == SOCKET_ERROR)
+        resolve_qio_cpevent(cpe, -WSAGetLastError());
+      else
+        resolve_qio_cpevent(cpe, res);
+
+      continue;
+    }
+    case QIO_CP_BIND: {
+      int res = bind(cpe->bind.fd, (void *)&cpe->bind.addr->addr,
+                     cpe->bind.addr->len);
+
+      if (res == SOCKET_ERROR)
+        resolve_qio_cpevent(cpe, -WSAGetLastError());
+      else
+        resolve_qio_cpevent(cpe, res);
+
+      continue;
+    }
+    case QIO_CP_READ: {
+      // Allocate a new overlapped structure.
+      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+      assert(cpe->ov != NULL);
+
+      cpe->ov->qd = cpe->qd;
+
+      // Queue up the read.
+      bool res = ReadFile((HANDLE)(uintptr_t)cpe->read.fd, cpe->read.buf,
+                          cpe->read.n, NULL, &cpe->ov->ov);
+
+      // An asynchronous read always returns false.
+      assert(!res);
+
+      // We must check get last error for ERROR_IO_PENDING
+      DWORD err = GetLastError();
+
+      if (err != ERROR_IO_PENDING)
+        resolve_qio_cpevent(cpe, -err);
+      else
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+
+      continue;
+    }
+    case QIO_CP_WRITE: {
+      // Allocate a new overlapped structure.
+      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+      assert(cpe->ov != NULL);
+
+      cpe->ov->qd = cpe->qd;
+
+      // Queue up the read.
+      bool res = WriteFile((HANDLE)(uintptr_t)cpe->read.fd, cpe->read.buf,
+                           cpe->read.n, NULL, &cpe->ov->ov);
+
+      // An asynchronous write always returns false.
+      assert(!res);
+
+      // We must check get last error for ERROR_IO_PENDING
+      DWORD err = GetLastError();
+
+      if (err != ERROR_IO_PENDING)
+        resolve_qio_cpevent(cpe, -err);
+      else
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+
+      continue;
+    }
+    case QIO_CP_SEND: {
+      // Allocate a new overlapped structure.
+      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+      assert(cpe->ov != NULL);
+
+      cpe->ov->qd = cpe->qd;
+
+      WSABUF buf = {.len = cpe->send.n, (char *)cpe->send.buf};
+
+      DWORD flags = 0, bytes = 0;
+      int res =
+          WSASend(cpe->send.fd, &buf, 1, &bytes, flags, &cpe->ov->ov, NULL);
+
+      DWORD err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
+
+      if (res != SOCKET_ERROR)
+        continue;
+      else if (err == WSAEWOULDBLOCK)
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+      else if (err != WSA_IO_PENDING)
+        resolve_qio_cpevent(cpe, -err);
+      else
+        assert(res < 0 && err == WSA_IO_PENDING);
+
+      break;
+    }
+    case QIO_CP_RECV: {
+      // Allocate a new overlapped structure.
+      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+      assert(cpe->ov != NULL);
+
+      cpe->ov->qd = cpe->qd;
+
+      WSABUF buf = {.len = cpe->recv.n, (char *)cpe->recv.buf};
+
+      DWORD flags = 0, bytes = 0;
+      int res =
+          WSARecv(cpe->recv.fd, &buf, 1, &bytes, &flags, &cpe->ov->ov, nullptr);
+
+      DWORD err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
+
+      /*
+       * Some issue I can see is when events happen that aren't on the
+       * completion port. Recvs don't seem to be triggering OV events.
+       */
+      if (res != SOCKET_ERROR)
+        continue;
+      else if (err == WSAEWOULDBLOCK)
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+      else if (err != WSA_IO_PENDING)
+        resolve_qio_cpevent(cpe, -err);
+      else
+        assert(res < 0 && err == WSA_IO_PENDING);
+
+      break;
+    }
+    case QIO_CP_CONNECT: {
+      int result = connect(cpe->connect.fd, (void *)&cpe->connect.addr->addr,
+                           cpe->connect.addr->len);
+
+      int err = 0;
+      if (result == SOCKET_ERROR)
+        err = WSAGetLastError();
+
+      switch (err) {
+        /* Retry until we get a real error */
+      case WSAEINVAL:
+      case WSAEWOULDBLOCK:
+      case WSAEALREADY:
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+        continue;
+        /* Already connected */
+        /* TODO:
+         * This isn't a proper way to check if our connect was successful.
+         * Consecutive qconnect calls *wont* error like we'd expect.
+         */
+      case WSAEISCONN:
+        resolve_qio_cpevent(cpe, 0);
+        continue;
+        /* shouldn't really happen */
+      case 0:
+        resolve_qio_cpevent(cpe, result);
+        continue;
+        /* a real error */
+      default:
+        resolve_qio_cpevent(cpe, -err);
+        continue;
+      }
+
+      if (err > 0 && err == WSAEWOULDBLOCK)
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+      else if (err > 0)
+        resolve_qio_cpevent(cpe, -err);
+      else
+        resolve_qio_cpevent(cpe, result);
+
+      continue;
+    }
+    case QIO_CP_ACCEPT:
+      SOCKET fd =
+          accept(cpe->accept.fd, (struct sockaddr *)&cpe->accept.addr_out->addr,
+                 &cpe->accept.addr_out->len);
+
+      int err = 0;
+
+      if (fd == INVALID_SOCKET)
+        err = WSAGetLastError();
+
+      if (err == WSAEWOULDBLOCK)
+        v_cpevent_push(&_qio_pending_ops, *cpe);
+      else if (err)
+        resolve_qio_cpevent(cpe, -err);
+
+      if (err)
+        continue;
+
+      assert((uintptr_t)fd < INT64_MAX);
+      qfd_t qfd = (int64_t)(uintptr_t)fd;
+
+      HANDLE res = CreateIoCompletionPort(
+          (HANDLE)fd, (HANDLE)(uintptr_t)_qio_completion_port, qfd, 0);
+
+      assert(res == _qio_completion_port);
+
+      // Change the IO mode of the socket to non-blocking
+      u_long iMode = 1;
+      int iResult = ioctlsocket(fd, FIONBIO, &iMode);
+      if (iResult != NO_ERROR)
+        resolve_qio_cpevent(cpe, -iResult);
+
+      resolve_qio_cpevent(cpe, fd);
+
+      continue;
+    }
+  }
+
+  v_cpevent_destroy(&pending);
+};
+
+QIO_API void qio_destroy() {}
+
+qd_t _qio_append_cpevent(struct qio_cpevent *src_cpevent) {
+  qd_t qid = qd_next();
+  assert(_qio_qds.len > 0);
+
+  src_cpevent->qd = qid;
+  v_cpevent_push(&_qio_pending_ops, *src_cpevent);
+
+  return qid;
+}
+
+QIO_API int32_t qio_loop() {
+  struct timespec interval = {.tv_nsec = QIO_LOOP_INTERVAL_NS};
+
+  while (true) {
+    if (!_qio_pending_ops.len) {
+      thrd_sleep(&interval, nullptr);
+      goto cq;
+    }
+
+    struct timespec t = {0};
+
+    OVERLAPPED_ENTRY events[256];
+    size_t total_events = sizeof(events) / sizeof(OVERLAPPED_ENTRY);
+
+    flush_pending();
+
+  cq:
+    ULONG nevents = 0;
+
+    // Pull up to total_events IO events off the port.
+    bool res = GetQueuedCompletionStatusEx(
+        (HANDLE)(uintptr_t)_qio_completion_port, (LPOVERLAPPED_ENTRY)&events,
+        total_events, &nevents,
+        0,    // Timeout - 0 to return immediately.
+        false // Not alertable.
+    );
+
+    assert(nevents >= 0);
+    if (nevents < 0)
+      return nevents;
+
+    if (res)
+      resolve_polled(events, nevents);
+  }
+}
+
+QIO_API qd_t qopen(const char *path) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_OPENAT,
+      .openat.root = QFD_INVALID_HANDLE,
+      .openat.path = path,
+  });
+}
+
+QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_OPENAT,
+      .openat.root = fd,
+      .openat.path = path,
+  });
+}
+
+QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+  assert(n < UINT32_MAX);
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_READ,
+      .read.n = n,
+      .read.buf = buf,
+      .read.fd = fd,
+  });
+}
+
+QIO_API qd_t qclose(qfd_t fd) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_CLOSE,
+      .close.fd = fd,
+  });
+}
+
+QIO_API qd_t qshutdown(qfd_t fd) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_SHUTDOWN,
+      .shutdown.fd = fd,
+      .shutdown.how = SD_BOTH,
+  });
+}
+
+QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_BIND,
+      .bind.fd = fd,
+      .bind.addr = addr,
+  });
+}
+
+QIO_API qd_t qlisten(qfd_t fd, uint32_t backlog) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_LISTEN,
+      .listen.fd = fd,
+      .listen.backlog = backlog,
+  });
+}
+
+QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_ACCEPT,
+      .accept.fd = fd,
+      .accept.addr_out = addr_out,
+  });
+}
+
+QIO_API qd_t qsocket(enum qsock_type type) {
+  int os_type = 0;
+
+  switch (type) {
+  case QSOCK_TCP:
+    os_type = SOCK_STREAM;
+    break;
+  case QSOCK_UDP:
+    os_type = SOCK_DGRAM;
+    break;
+  default:
+    return -1;
+  }
+
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_SOCKET,
+      .socket.type = os_type,
+  });
+}
+
+QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_CONNECT,
+      .connect.fd = fd,
+      .connect.addr = addr,
+  });
+}
+
+QIO_API qd_t qsend(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_SEND,
+      .send.fd = fd,
+      .send.n = n,
+      .send.buf = buf,
+  });
+}
+
+QIO_API qd_t qrecv(qfd_t fd, uint64_t n, uint8_t buf[n]) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_RECV,
+      .recv.fd = fd,
+      .recv.n = n,
+      .recv.buf = buf,
   });
 }
 
