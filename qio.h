@@ -907,12 +907,11 @@ QIO_API int32_t qio_init(uint64_t size) {
 /**
  * Finish the qd stored in ke->ke.udata with res and flags;
  */
-void resolve_qio_kevent(struct qio_kevent *ke, int64_t res, int64_t flags) {
+void resolve_qio_kevent(struct qio_kevent *ke, int64_t res) {
   qd_t qd = (uintptr_t)ke->ke.udata;
   struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
 
   op.result = res < 0 ? -errno : res;
-  op.flags = flags;
   op.done = true;
 
   v_qd_set(&_qio_qds, qd, op);
@@ -945,7 +944,7 @@ void resolve_polled(struct kevent *events, int nevents) {
         if (ke->flags & EV_ERROR) {
           result = -ke->data;
           /* Our event failed for some reason. Bubble up the error */
-          resolve_qio_kevent(qioke, result, 0);
+          resolve_qio_kevent(qioke, result);
           continue;
         }
 
@@ -1016,9 +1015,9 @@ void resolve_polled(struct kevent *events, int nevents) {
     if (result < 0 && errno == EAGAIN || errno == EWOULDBLOCK)
       v_kevent_push(&_qio_pending_ops, *qioke);
     else if (result < 0 && errno == EINTR)
-      resolve_qio_kevent(qioke, 0, 0);
+      resolve_qio_kevent(qioke, 0);
     else
-      resolve_qio_kevent(qioke, result, 0);
+      resolve_qio_kevent(qioke, result);
   }
 
   v_kevent_destroy(&pending);
@@ -1062,50 +1061,50 @@ int flush_pending(struct kevent *events, int nevents) {
       int fd = openat(ke->ke.ident, ke->openat.path,
                       O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK, 0666);
 
-      resolve_qio_kevent(ke, fd, 0);
+      resolve_qio_kevent(ke, fd);
       continue;
     }
     case QIO_KQ_SOCKET: {
       // Perform the `socket` syscall.
       int fd = socket(AF_INET6, ke->socket.type, 0);
       if (fd < 0) {
-        resolve_qio_kevent(ke, fd, 0);
+        resolve_qio_kevent(ke, fd);
         continue;
       }
 
       int res = fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | O_NONBLOCK);
       if (res < 0) {
-        resolve_qio_kevent(ke, res, 0);
+        resolve_qio_kevent(ke, res);
         continue;
       }
 
-      resolve_qio_kevent(ke, fd, 0);
+      resolve_qio_kevent(ke, fd);
       continue;
     }
     case QIO_KQ_CLOSE: {
       int res = close(ke->ke.ident);
-      resolve_qio_kevent(ke, res, 0);
+      resolve_qio_kevent(ke, res);
       continue;
     }
     case QIO_KQ_SHUTDOWN: {
       int res = shutdown(ke->ke.ident, ke->shutdown.how);
-      resolve_qio_kevent(ke, res, 0);
+      resolve_qio_kevent(ke, res);
       continue;
     }
     case QIO_KQ_LISTEN: {
       int res = listen(ke->ke.ident, ke->listen.backlog);
-      resolve_qio_kevent(ke, res, 0);
+      resolve_qio_kevent(ke, res);
       continue;
     }
     case QIO_KQ_BIND: {
       int res = bind(ke->ke.ident, (void *)&ke->bind.addr, ke->bind.addr->len);
-      resolve_qio_kevent(ke, res, 0);
+      resolve_qio_kevent(ke, res);
       continue;
     }
     case QIO_KQ_CONNECT: {
       int res = connect(ke->ke.ident, (void *)&ke->connect.addr->addr,
                         ke->connect.addr->len);
-      resolve_qio_kevent(ke, res, 0);
+      resolve_qio_kevent(ke, res);
       continue;
     }
     case QIO_KQ_SEND:
