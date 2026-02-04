@@ -191,6 +191,9 @@ QIO_API qd_t qopenat(qfd_t fd, const char *path);
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]);
 
+struct qio_stat;
+QIO_API qd_t qstat(qfd_t fd, struct qio_stat *stat);
+
 enum qsock_type { QSOCK_TCP, QSOCK_UDP };
 QIO_API qd_t qsocket(enum qsock_type type);
 
@@ -366,6 +369,7 @@ QIO_API qd_t qd_next() {
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -381,11 +385,21 @@ struct qio_addr {
   socklen_t len;
 };
 
+struct qio_stat {
+  struct statx statxbuf;
+};
+
+QIO_API uint64_t qio_statsize(struct qio_stat *stat) {
+  assert(stat->statxbuf.stx_mask & STATX_SIZE);
+  return stat->statxbuf.stx_size;
+}
+
 QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
   struct addrinfo hints = {.ai_family = AF_INET6};
+
   // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
   // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
 
@@ -631,6 +645,17 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 }
 
+QIO_API qd_t qstat(qfd_t fd, struct qio_stat *stat) {
+  return _qio_append_sqe(&(struct io_uring_sqe){
+      .opcode = IORING_OP_STATX,
+      .fd = fd,
+      .addr = (uintptr_t)"",
+      .statx_flags = AT_EMPTY_PATH,
+      .len = STATX_BASIC_STATS,
+      .off = (uintptr_t)stat,
+  });
+}
+
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return _qio_append_sqe(&(struct io_uring_sqe){
@@ -761,6 +786,8 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
 #include <netinet/in.h>
 #include <sys/event.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 struct qio_addr {
@@ -792,7 +819,14 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
   return freeaddrinfo(addrinfo), 0;
 }
 
+struct qio_stat {
+  struct stat statbuf;
+};
+
 qfd_t _qio_queue;
+QIO_API uint64_t qio_statsize(struct qio_stat *stat) {
+  return stat->statbuf.st_size;
+}
 
 struct qio_kevent {
   struct kevent ke;
@@ -801,6 +835,7 @@ struct qio_kevent {
     QIO_KQ_OPENAT,
     QIO_KQ_READ,
     QIO_KQ_WRITE,
+    QIO_KQ_STAT,
     QIO_KQ_SOCKET,
     QIO_KQ_ACCEPT,
     QIO_KQ_LISTEN,
@@ -813,6 +848,10 @@ struct qio_kevent {
   } op;
 
   union {
+    struct {
+      struct stat *buf;
+    } stat;
+
     struct {
       const char *path;
     } openat;
@@ -1064,6 +1103,16 @@ int flush_pending(struct kevent *events, int nevents) {
       resolve_qio_kevent(ke, fd);
       continue;
     }
+    case QIO_KQ_STAT: {
+      int res = fstat(ke->ke.ident, ke->stat.buf);
+
+      if (res)
+        resolve_qio_kevent(ke, -errno);
+      else
+        resolve_qio_kevent(ke, res);
+
+      continue;
+    }
     case QIO_KQ_SOCKET: {
       // Perform the `socket` syscall.
       int fd = socket(AF_INET6, ke->socket.type, 0);
@@ -1198,6 +1247,14 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
   });
 };
 
+QIO_API qd_t qstat(qfd_t fd, struct qio_stat *stat) {
+  return _qio_append_kevent(&(struct qio_kevent){
+      .op = QIO_KQ_STAT,
+      .ke.ident = fd,
+      .stat.buf = &stat->statbuf,
+  });
+}
+
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_WRITE,
@@ -1320,6 +1377,8 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
 }
 #elifdef QIO_WINDOWS
 
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1339,6 +1398,7 @@ struct qio_cpevent {
     QIO_CP_WRITE,
     QIO_CP_SOCKET,
     QIO_CP_ACCEPT,
+    QIO_CP_STAT,
     QIO_CP_LISTEN,
     QIO_CP_BIND,
     QIO_CP_CONNECT,
@@ -1349,6 +1409,12 @@ struct qio_cpevent {
   } op;
 
   union {
+    struct {
+      qfd_t fd;
+      FILE_BASIC_INFO *buf_basic;
+      FILE_STANDARD_INFO *buf_standard;
+    } stat;
+
     struct {
       const char *path;
       qfd_t root;
@@ -1484,14 +1550,6 @@ void resolve_qio_cpevent(struct qio_cpevent *cpe, int64_t res) {
   v_qd_set(&_qio_qds, qd, (struct qio_op_t){.done = true, .result = res});
 }
 
-/*
- * WINDOWS ISSUE:
- *
- * For some reason, it appears that RECV events aren't coming through
- * on the IO completion port. No idea why.
- *
- */
-
 void resolve_polled(LPOVERLAPPED_ENTRY events, ULONG nevents) {
   for (int i = 0; i < nevents; i++) {
     OVERLAPPED_ENTRY *ole = &events[i];
@@ -1533,10 +1591,13 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
   return freeaddrinfo(addrinfo), 0;
 }
 
-void debug_recv(DWORD dwError, DWORD cbTransferred,
-                LPWSAOVERLAPPED lpOverlapped, DWORD dwFlags) {
-  printf("[DEBUG] RECV COMPLETION: err (%li), bytes (%li)\n", dwError,
-         cbTransferred);
+struct qio_stat {
+  FILE_BASIC_INFO buf_basic;
+  FILE_STANDARD_INFO buf_standard;
+};
+
+uint64_t qio_statsize(struct qio_stat *stat) {
+  return stat->buf_standard.EndOfFile.QuadPart;
 }
 
 /**
@@ -1603,6 +1664,28 @@ void flush_pending() {
       assert(res == _qio_completion_port);
 
       resolve_qio_cpevent(cpe, qfd);
+      continue;
+    }
+    case QIO_CP_STAT: {
+      BOOL res = GetFileInformationByHandleEx(
+          (HANDLE)(uintptr_t)cpe->stat.fd, FileStandardInfo,
+          cpe->stat.buf_standard, sizeof(FILE_STANDARD_INFO));
+
+      if (!res) {
+        resolve_qio_cpevent(cpe, -GetLastError());
+        continue;
+      }
+
+      res = GetFileInformationByHandleEx((HANDLE)(uintptr_t)cpe->stat.fd,
+                                         FileBasicInfo, cpe->stat.buf_basic,
+                                         sizeof(FILE_BASIC_INFO));
+
+      if (!res) {
+        resolve_qio_cpevent(cpe, -GetLastError());
+        continue;
+      }
+
+      resolve_qio_cpevent(cpe, 0);
       continue;
     }
     case QIO_CP_SOCKET: {
@@ -1970,6 +2053,15 @@ QIO_API qd_t qaccept(qfd_t fd, struct qio_addr *addr_out) {
       .op = QIO_CP_ACCEPT,
       .accept.fd = fd,
       .accept.addr_out = addr_out,
+  });
+}
+
+QIO_API qd_t qstat(qfd_t fd, struct qio_stat *stat) {
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_STAT,
+      .stat.fd = fd,
+      .stat.buf_basic = &stat->buf_basic,
+      .stat.buf_standard = &stat->buf_standard,
   });
 }
 
