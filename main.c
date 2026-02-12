@@ -54,16 +54,16 @@ int main() {
   uint8_t buf[BUF_SIZE];
   qd_t qids[NQIDS];
 
-  // for (int i = 0; i < NQIDS; i++) {
-  //   qids[i] = qread(fd, sizeof(buf), buf);
-  //   printf("[QID %i] Queued read of %lu.\n", qids[i], sizeof(buf));
-  // }
+  for (int i = 0; i < NQIDS; i++) {
+    qids[i] = qread(fd, sizeof(buf), buf);
+    printf("[QID %i] Queued read of %lu.\n", qids[i], sizeof(buf));
+  }
 
-  // for (int i = 0; i < NQIDS; i++) {
-  //   qd_t qid = qids[i];
-  //   int64_t result = qd_result(qid);
-  //   printf("[QID %i] Read got: %li.\n", qid, result);
-  // }
+  for (int i = 0; i < NQIDS; i++) {
+    qd_t qid = qids[i];
+    int64_t result = qd_result(qid);
+    printf("[QID %i] Read got: %li.\n", qid, result);
+  }
 
   thrd_join(t, nullptr);
 

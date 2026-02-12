@@ -462,6 +462,7 @@ QIO_API int32_t qio_loop() {
      */
     if (!_qio_queued_sqes.len && head == *_qio_cring_tail) {
       thrd_sleep(&interval, nullptr);
+      thrd_yield();
       continue;
     }
 
@@ -1193,6 +1194,7 @@ QIO_API int32_t qio_loop() {
   while (true) {
     if (!_qio_pending_ops.len) {
       thrd_sleep(&interval, nullptr);
+      thrd_yield();
       continue;
     }
 
@@ -1961,6 +1963,7 @@ QIO_API int32_t qio_loop() {
   while (true) {
     if (!_qio_pending_ops.len) {
       thrd_sleep(&interval, nullptr);
+      thrd_yield();
       goto cq;
     }
 
