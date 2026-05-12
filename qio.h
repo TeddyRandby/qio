@@ -1521,6 +1521,8 @@ QIO_API int32_t qio_init(uint64_t size) {
   _qio_completion_port =
       (uintptr_t)CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
 
+  // Associate stdin, out, and err with completion port?
+
   if (_qio_completion_port == QFD_INVALID_HANDLE)
     return 1;
 
@@ -1531,6 +1533,8 @@ void resolve_qio_cpov_event(struct qiocpe_ov *ov, int64_t res) {
   qd_t qd = ov->qd;
 
   struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
+  printf("OP %p (%i): %i %i <- %li\n",ov, qd, op.done, op.result, res);
+
   assert(!op.done);
   assert(!op.result);
 
@@ -1553,10 +1557,10 @@ void resolve_qio_cpevent(struct qio_cpevent *cpe, int64_t res) {
 }
 
 void resolve_polled(LPOVERLAPPED_ENTRY events, ULONG nevents) {
+  printf("POLLED %lu EVENTS\n", nevents);
   for (int i = 0; i < nevents; i++) {
     OVERLAPPED_ENTRY *ole = &events[i];
     struct qiocpe_ov *ov = ole->lpOverlapped;
-    qd_t qd = ov->qd;
 
     resolve_qio_cpov_event(ov, ole->dwNumberOfBytesTransferred);
   }
@@ -1631,6 +1635,7 @@ void flush_pending() {
   // Allowing other threads to queue more pending operations
   // while this vector is processed.
   v_cpevent_drain(&_qio_pending_ops, &pending);
+  printf("DRAINED %lu events\n", pending.len);
 
   for (size_t i = 0; i < pending.len; i++) {
     // We can safely index data here, as no other code or thread
@@ -1764,6 +1769,7 @@ void flush_pending() {
       assert(cpe->ov != NULL);
 
       cpe->ov->qd = cpe->qd;
+      printf("QREAD: %lu\n", cpe->qd);
 
       // Queue up the read.
       bool res = ReadFile((HANDLE)(uintptr_t)cpe->read.fd, cpe->read.buf,
@@ -1777,8 +1783,8 @@ void flush_pending() {
 
       if (err != ERROR_IO_PENDING)
         resolve_qio_cpevent(cpe, -err);
-      else
-        v_cpevent_push(&_qio_pending_ops, *cpe);
+
+      // The completion port is responsible for resolving this now.
 
       continue;
     }
@@ -1801,8 +1807,8 @@ void flush_pending() {
 
       if (err != ERROR_IO_PENDING)
         resolve_qio_cpevent(cpe, -err);
-      else
-        v_cpevent_push(&_qio_pending_ops, *cpe);
+
+      // The completion port is responsible for resolving this now.
 
       continue;
     }
@@ -1972,6 +1978,7 @@ QIO_API int32_t qio_loop() {
     OVERLAPPED_ENTRY events[256];
     size_t total_events = sizeof(events) / sizeof(OVERLAPPED_ENTRY);
 
+    printf("PENDING %lu EVENTS\n", _qio_pending_ops.len);
     flush_pending();
 
   cq:

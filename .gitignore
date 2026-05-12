@@ -1,1 +1,9 @@
 .cache/clangd/index
+/main
+/main-macos
+/main-windows.exe
+/main-windows.pdb
+/tcp_server
+/tcp_server-macos
+/tcp_server-windows.exe
+/tcp_server-windows.pdb

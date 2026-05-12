@@ -77,7 +77,6 @@ LINKAGE void METHOD(drain)(TYPENAME *self, TYPENAME *other) {
   other->cap = self->cap;
   other->len = self->len;
   other->data = self->data;
-  ;
 
   self->len = 0;
   self->cap = 0;

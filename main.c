@@ -1,7 +1,7 @@
 #include <stdio.h>
 
-#include "threads.h"
 #include "qio.h"
+#include "threads.h"
 
 #define QSIZE 256
 
@@ -23,7 +23,7 @@ int io_loop(void *initialized) {
 }
 
 #define BUF_SIZE 1000
-#define NQIDS 1000
+#define NQIDS 10
 
 int main() {
   _Atomic bool initialized = false;
@@ -36,7 +36,6 @@ int main() {
     ;
 
   printf("[MAIN] Beginning work.\n");
-
 
   qd_t file_qid = qopen("README.md");
 
@@ -64,6 +63,13 @@ int main() {
     int64_t result = qd_result(qid);
     printf("[QID %i] Read got: %li.\n", qid, result);
   }
+
+  const char message[] = "\n-----\nThis is message\n-----\n";
+  qd_t write_qd = qwrite(fileno(stdout), sizeof(message), (uint8_t *)message);
+
+  printf("[MAIN] Writing message on %i\n", write_qd);
+  long int result = qd_result(write_qd);
+  printf("[MAIN] Write result: %li\n", result);
 
   thrd_join(t, nullptr);
 
