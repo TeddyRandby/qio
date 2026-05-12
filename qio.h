@@ -1521,10 +1521,13 @@ QIO_API int32_t qio_init(uint64_t size) {
   _qio_completion_port =
       (uintptr_t)CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
 
-  // Associate stdin, out, and err with completion port?
-
   if (_qio_completion_port == QFD_INVALID_HANDLE)
     return 1;
+
+  // Associate stdin, out, and err with completion port?
+  // This isn't as easy as you'd think. I don't know that you *can*
+  // attach stdin/out/err to a completion port, as I don't know that you
+  // can put them into overlapped mode.
 
   return 0;
 }
@@ -1533,7 +1536,7 @@ void resolve_qio_cpov_event(struct qiocpe_ov *ov, int64_t res) {
   qd_t qd = ov->qd;
 
   struct qio_op_t op = v_qd_val_at(&_qio_qds, qd);
-  printf("OP %p (%i): %i %i <- %li\n",ov, qd, op.done, op.result, res);
+  printf("OP %p (%i): %i %i <- %li\n", ov, qd, op.done, op.result, res);
 
   assert(!op.done);
   assert(!op.result);
@@ -2031,12 +2034,11 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
   assert(n < UINT32_MAX);
   return _qio_append_cpevent(&(struct qio_cpevent){
       .op = QIO_CP_WRITE,
-      .read.n = n,
-      .read.buf = buf,
-      .read.fd = fd,
+      .write.n = n,
+      .write.buf = buf,
+      .write.fd = fd,
   });
 }
-
 
 QIO_API qd_t qclose(qfd_t fd) {
   return _qio_append_cpevent(&(struct qio_cpevent){
