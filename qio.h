@@ -1789,9 +1789,9 @@ void flush_pending() {
 
       cpe->ov->qd = cpe->qd;
 
-      // Queue up the read.
-      bool res = WriteFile((HANDLE)(uintptr_t)cpe->read.fd, cpe->read.buf,
-                           cpe->read.n, NULL, &cpe->ov->ov);
+      // Queue up the write.
+      bool res = WriteFile((HANDLE)(uintptr_t)cpe->write.fd, cpe->write.buf,
+                           cpe->write.n, NULL, &cpe->ov->ov);
 
       // An asynchronous write always returns false.
       assert(!res);
@@ -2019,6 +2019,17 @@ QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]) {
       .read.fd = fd,
   });
 }
+
+QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
+  assert(n < UINT32_MAX);
+  return _qio_append_cpevent(&(struct qio_cpevent){
+      .op = QIO_CP_WRITE,
+      .read.n = n,
+      .read.buf = buf,
+      .read.fd = fd,
+  });
+}
+
 
 QIO_API qd_t qclose(qfd_t fd) {
   return _qio_append_cpevent(&(struct qio_cpevent){
