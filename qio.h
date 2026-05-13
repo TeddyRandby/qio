@@ -145,7 +145,6 @@
  * list*, meaning we could atomically pop items out without having to lock.
  * Maybe there is an entirely lock-free implementation of the freelist we could
  * use as well.
- *  - The windows implementation with IO completion ports.
  *  - Double check that qio_addrfrom is implemented correctly. I really don't
  * know.
  *  - Further testing and benchmarking
@@ -153,6 +152,8 @@
  *  - Implement more producer functions. (Maybe the io_vec stuff would be
  * useful?)
  *  - Implement cross-platform error string retrieval. (Wrapping strerror, etc)
+ *  - A cross-platform way of retreiving qfd handles to stdin,out,err.
+ *    -> This will be difficult on windows, as there is no overlapped io on stdin/out/err.
  */
 
 /*
@@ -1529,7 +1530,7 @@ QIO_API int32_t qio_init(uint64_t size) {
   // can put them into overlapped mode.
   // Here is a relevant link: https://github.com/tokio-rs/mio/issues/321
   // Long story short, you can't really do IOCP on a console in/out/err for
-  // windows. 
+  // windows.
 
   return 0;
 }
