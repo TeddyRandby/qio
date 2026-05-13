@@ -1527,6 +1527,9 @@ QIO_API int32_t qio_init(uint64_t size) {
   // This isn't as easy as you'd think. I don't know that you *can*
   // attach stdin/out/err to a completion port, as I don't know that you
   // can put them into overlapped mode.
+  // Here is a relevant link: https://github.com/tokio-rs/mio/issues/321
+  // Long story short, you can't really do IOCP on a console in/out/err for
+  // windows. 
 
   return 0;
 }
@@ -1651,7 +1654,7 @@ void flush_pending() {
                               OPEN_ALWAYS, FILE_FLAG_OVERLAPPED, NULL);
 
       if (fd == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
+        int64_t err = GetLastError();
         assert(err > 0);
         resolve_qio_cpevent(cpe, -err);
         continue;
@@ -1678,7 +1681,7 @@ void flush_pending() {
           cpe->stat.buf_standard, sizeof(FILE_STANDARD_INFO));
 
       if (!res) {
-        resolve_qio_cpevent(cpe, -GetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)GetLastError());
         continue;
       }
 
@@ -1687,7 +1690,7 @@ void flush_pending() {
                                          sizeof(FILE_BASIC_INFO));
 
       if (!res) {
-        resolve_qio_cpevent(cpe, -GetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)GetLastError());
         continue;
       }
 
@@ -1698,7 +1701,7 @@ void flush_pending() {
       SOCKET fd = socket(AF_INET6, cpe->socket.type, 0);
 
       if (fd == INVALID_SOCKET) {
-        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)WSAGetLastError());
         continue;
       }
 
@@ -1725,7 +1728,7 @@ void flush_pending() {
       int res = closesocket(cpe->close.fd);
 
       if (res == SOCKET_ERROR)
-        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)WSAGetLastError());
       else
         resolve_qio_cpevent(cpe, res);
 
@@ -1735,7 +1738,7 @@ void flush_pending() {
       int res = shutdown(cpe->shutdown.fd, cpe->shutdown.how);
 
       if (res == SOCKET_ERROR)
-        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)WSAGetLastError());
       else
         resolve_qio_cpevent(cpe, res);
 
@@ -1745,7 +1748,7 @@ void flush_pending() {
       int res = listen(cpe->listen.fd, cpe->listen.backlog);
 
       if (res == SOCKET_ERROR)
-        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)WSAGetLastError());
       else
         resolve_qio_cpevent(cpe, res);
 
@@ -1756,7 +1759,7 @@ void flush_pending() {
                      cpe->bind.addr->len);
 
       if (res == SOCKET_ERROR)
-        resolve_qio_cpevent(cpe, -WSAGetLastError());
+        resolve_qio_cpevent(cpe, -(int64_t)WSAGetLastError());
       else
         resolve_qio_cpevent(cpe, res);
 
@@ -1777,7 +1780,7 @@ void flush_pending() {
       assert(!res);
 
       // We must check get last error for ERROR_IO_PENDING
-      DWORD err = GetLastError();
+      int64_t err = GetLastError();
 
       if (err != ERROR_IO_PENDING)
         resolve_qio_cpevent(cpe, -err);
@@ -1801,7 +1804,7 @@ void flush_pending() {
       assert(!res);
 
       // We must check get last error for ERROR_IO_PENDING
-      DWORD err = GetLastError();
+      int64_t err = GetLastError();
 
       if (err != ERROR_IO_PENDING)
         resolve_qio_cpevent(cpe, -err);
@@ -1823,7 +1826,7 @@ void flush_pending() {
       int res =
           WSASend(cpe->send.fd, &buf, 1, &bytes, flags, &cpe->ov->ov, NULL);
 
-      DWORD err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
+      int64_t err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
 
       if (res != SOCKET_ERROR)
         continue;
@@ -1849,7 +1852,7 @@ void flush_pending() {
       int res =
           WSARecv(cpe->recv.fd, &buf, 1, &bytes, &flags, &cpe->ov->ov, nullptr);
 
-      DWORD err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
+      int64_t err = res == SOCKET_ERROR ? WSAGetLastError() : 0;
 
       /*
        * Some issue I can see is when events happen that aren't on the
@@ -1870,7 +1873,7 @@ void flush_pending() {
       int result = connect(cpe->connect.fd, (void *)&cpe->connect.addr->addr,
                            cpe->connect.addr->len);
 
-      int err = 0;
+      int64_t err = 0;
       if (result == SOCKET_ERROR)
         err = WSAGetLastError();
 
@@ -1913,8 +1916,7 @@ void flush_pending() {
           accept(cpe->accept.fd, (struct sockaddr *)&cpe->accept.addr_out->addr,
                  &cpe->accept.addr_out->len);
 
-      int err = 0;
-
+      int64_t err = 0;
       if (fd == INVALID_SOCKET)
         err = WSAGetLastError();
 
