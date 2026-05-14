@@ -1401,7 +1401,9 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
 #include <ws2tcpip.h>
 
 QIO_API qfd_t qfd_stdin() { return (uintptr_t)GetStdHandle(STD_INPUT_HANDLE); }
-QIO_API qfd_t qfd_stdout() { return (uintptr_t)GetStdHandle(STD_OUTPUT_HANDLE); }
+QIO_API qfd_t qfd_stdout() {
+  return (uintptr_t)GetStdHandle(STD_OUTPUT_HANDLE);
+}
 QIO_API qfd_t qfd_stderr() { return (uintptr_t)GetStdHandle(STD_ERROR_HANDLE); }
 
 struct qiocpe_ov {
@@ -1810,13 +1812,12 @@ void flush_pending() {
 
         cpe->ov->qd = cpe->qd;
 
-        size_t bytes = 0;
-
         // Queue up the read.
         bool res = ReadFile(fd, cpe->read.buf, cpe->read.n, NULL, &cpe->ov->ov);
 
         // Reads may return synchronously, even if they are async.
         if (res) {
+          size_t bytes = 0;
           // Check overlapped result, don't wait.
           if (GetOverlappedResult(fd, cpe->ov, &bytes, false)) {
             resolve_qio_cpevent(cpe, bytes);
@@ -1857,7 +1858,6 @@ void flush_pending() {
         assert(cpe->ov != NULL);
 
         cpe->ov->qd = cpe->qd;
-        size_t bytes = 0;
 
         // Queue up the write.
         bool res = WriteFile((HANDLE)(uintptr_t)cpe->write.fd, cpe->write.buf,
@@ -1865,9 +1865,13 @@ void flush_pending() {
 
         // Writes may return synchronously, even if they are async.
         if (res) {
-          resolve_qio_cpevent(cpe, bytes);
-          free(cpe->ov);
-          continue;
+          size_t bytes = 0;
+          // Check overlapped result, don't wait.
+          if (GetOverlappedResult(fd, cpe->ov, &bytes, false)) {
+            resolve_qio_cpevent(cpe, bytes);
+            free(cpe->ov);
+            continue;
+          }
         }
       }
 
