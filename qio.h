@@ -1839,9 +1839,6 @@ void flush_pending() {
     }
     case QIO_CP_WRITE: {
       HANDLE fd = (HANDLE)(uintptr_t)cpe->write.fd;
-      printf("FD: %p\nIN: %p\nOUT: %p\nERR: %p\n", fd,
-             GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE),
-             GetStdHandle(STD_ERROR_HANDLE));
       // if (fd == GetStdHandle(STD_OUTPUT_HANDLE)) {
       //   printf("WRITE STDOUT DETECTED\n");
       //   // Queue up the write.
