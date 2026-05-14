@@ -5,6 +5,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /*
  *  ██████╗ ██╗ ██████╗
@@ -153,7 +154,8 @@
  * useful?)
  *  - Implement cross-platform error string retrieval. (Wrapping strerror, etc)
  *  - A cross-platform way of retreiving qfd handles to stdin,out,err.
- *    -> This will be difficult on windows, as there is no overlapped io on stdin/out/err.
+ *    -> This will be difficult on windows, as there is no overlapped io on
+ * stdin/out/err.
  */
 
 /*
@@ -178,6 +180,10 @@ typedef int64_t qfd_t;
 QIO_API int32_t qio_init(uint64_t size);
 QIO_API int32_t qio_loop();
 QIO_API void qio_destroy();
+
+QIO_API qfd_t qfd_stdin();
+QIO_API qfd_t qfd_stdout();
+QIO_API qfd_t qfd_stderr();
 
 struct qio_addr;
 QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
@@ -374,6 +380,10 @@ QIO_API qd_t qd_next() {
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+QIO_API qfd_t qfd_stdin() { return fileno(stdin); }
+QIO_API qfd_t qfd_stdout() { return fileno(stdout); }
+QIO_API qfd_t qfd_stderr() { return fileno(stderr); }
 
 #define io_uring_smp_store_release(p, v)                                       \
   atomic_store_explicit((_Atomic typeof(*(p)) *)(p), (v), memory_order_release)
@@ -791,6 +801,10 @@ QIO_API qd_t qconnect(qfd_t fd, const struct qio_addr *addr) {
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+QIO_API qfd_t qfd_stdin() { return fileno(stdin); }
+QIO_API qfd_t qfd_stdout() { return fileno(stdout); }
+QIO_API qfd_t qfd_stderr() { return fileno(stderr); }
 
 struct qio_addr {
   struct sockaddr_in6 addr;
@@ -1386,6 +1400,10 @@ QIO_API qd_t qbind(qfd_t fd, const struct qio_addr *addr) {
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+QIO_API qfd_t qfd_stdin() { return (uintptr_t)GetStdHandle(STD_INPUT_HANDLE); }
+QIO_API qfd_t qfd_stdout() { return (uintptr_t)GetStdHandle(STD_OUTPUT_HANDLE); }
+QIO_API qfd_t qfd_stderr() { return (uintptr_t)GetStdHandle(STD_ERROR_HANDLE); }
+
 struct qiocpe_ov {
   OVERLAPPED ov;
   qd_t qd;
@@ -1767,18 +1785,46 @@ void flush_pending() {
       continue;
     }
     case QIO_CP_READ: {
-      // Allocate a new overlapped structure.
-      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
-      assert(cpe->ov != NULL);
+      HANDLE fd = (HANDLE)(uintptr_t)cpe->read.fd;
 
-      cpe->ov->qd = cpe->qd;
+      /*
+       * IOCP Doesn't work on stdin/out/err.
+       *
+       * Instead, we just perform a blocking read/write here.
+       *
+       * TODO: Can we make sure reads don't block this whole thread?
+       */
 
-      // Queue up the read.
-      bool res = ReadFile((HANDLE)(uintptr_t)cpe->read.fd, cpe->read.buf,
-                          cpe->read.n, NULL, &cpe->ov->ov);
+      // if (fd == GetStdHandle(STD_INPUT_HANDLE)) {
+      //   // Queue up the read.
+      //   size_t bytes = 0;
+      //   bool res = ReadFile(fd, cpe->read.buf, cpe->read.n, &bytes, NULL);
+      //
+      //   if (res)
+      //     resolve_qio_cpevent(cpe, bytes);
+      // } else {
+      {
+        // Allocate a new overlapped structure.
+        cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+        assert(cpe->ov != NULL);
 
-      // An asynchronous read always returns false.
-      assert(!res);
+        cpe->ov->qd = cpe->qd;
+
+        size_t bytes = 0;
+
+        // Queue up the read.
+        bool res = ReadFile(fd, cpe->read.buf, cpe->read.n, NULL, &cpe->ov->ov);
+
+        // Reads may return synchronously, even if they are async.
+        if (res) {
+          // Check overlapped result, don't wait.
+          if (GetOverlappedResult(fd, cpe->ov, &bytes, false)) {
+            resolve_qio_cpevent(cpe, bytes);
+            free(cpe->ov);
+            continue;
+          }
+        }
+      }
 
       // We must check get last error for ERROR_IO_PENDING
       int64_t err = GetLastError();
@@ -1791,18 +1837,39 @@ void flush_pending() {
       continue;
     }
     case QIO_CP_WRITE: {
-      // Allocate a new overlapped structure.
-      cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
-      assert(cpe->ov != NULL);
+      HANDLE fd = (HANDLE)(uintptr_t)cpe->write.fd;
+      printf("FD: %p\nIN: %p\nOUT: %p\nERR: %p\n", fd,
+             GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE),
+             GetStdHandle(STD_ERROR_HANDLE));
+      // if (fd == GetStdHandle(STD_OUTPUT_HANDLE)) {
+      //   printf("WRITE STDOUT DETECTED\n");
+      //   // Queue up the write.
+      //   size_t bytes = 0;
+      //   bool res = WriteFile(fd, cpe->write.buf, cpe->write.n, &bytes, NULL);
+      //
+      //   if (res)
+      //     resolve_qio_cpevent(cpe, bytes);
+      // } else {
 
-      cpe->ov->qd = cpe->qd;
+      {
+        // Allocate a new overlapped structure.
+        cpe->ov = calloc(sizeof(struct qiocpe_ov), 1);
+        assert(cpe->ov != NULL);
 
-      // Queue up the write.
-      bool res = WriteFile((HANDLE)(uintptr_t)cpe->write.fd, cpe->write.buf,
-                           cpe->write.n, NULL, &cpe->ov->ov);
+        cpe->ov->qd = cpe->qd;
+        size_t bytes = 0;
 
-      // An asynchronous write always returns false.
-      assert(!res);
+        // Queue up the write.
+        bool res = WriteFile((HANDLE)(uintptr_t)cpe->write.fd, cpe->write.buf,
+                             cpe->write.n, NULL, &cpe->ov->ov);
+
+        // Writes may return synchronously, even if they are async.
+        if (res) {
+          resolve_qio_cpevent(cpe, bytes);
+          free(cpe->ov);
+          continue;
+        }
+      }
 
       // We must check get last error for ERROR_IO_PENDING
       int64_t err = GetLastError();
@@ -2038,6 +2105,9 @@ QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]) {
 }
 
 QIO_API qd_t qclose(qfd_t fd) {
+  // On windows, closesocket and close are different.
+  // Sockets need to be closed with a separate function.
+  // woohoo
   return _qio_append_cpevent(&(struct qio_cpevent){
       .op = QIO_CP_CLOSE,
       .close.fd = fd,

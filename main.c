@@ -53,6 +53,10 @@ int main() {
   uint8_t buf[BUF_SIZE];
   qd_t qids[NQIDS];
 
+  char keys[100] = {}; 
+  qd_t read_qd = qread(qfd_stdin(), sizeof(keys), (uint8_t *)keys);
+  printf("[MAIN] QREAD KEYS %i\n", read_qd);
+
   for (int i = 0; i < NQIDS; i++) {
     qids[i] = qread(fd, sizeof(buf), buf);
     printf("[QID %i] Queued read of %lu.\n", qids[i], sizeof(buf));
@@ -65,11 +69,15 @@ int main() {
   }
 
   const char message[] = "\n-----\nThis is message\n-----\n";
-  qd_t write_qd = qwrite(fileno(stdout), sizeof(message), (uint8_t *)message);
+  qd_t write_qd = qwrite(qfd_stdout(), sizeof(message), (uint8_t *)message);
 
   printf("[MAIN] Writing message on %i\n", write_qd);
-  long int result = qd_result(write_qd);
+  int64_t result = qd_result(write_qd);
   printf("[MAIN] Write result: %li\n", result);
+
+  result = qd_result(read_qd);
+  printf("[MAIN] Read result: %li\n", result);
+  printf("\n----\n%.*s\n---\n", (int)result, keys);
 
   thrd_join(t, nullptr);
 
