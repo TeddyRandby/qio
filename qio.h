@@ -409,7 +409,7 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
-  struct addrinfo hints = {.ai_family = AF_INET6};
+  struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_V4MAPPED};
 
   // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
   // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
@@ -816,7 +816,7 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
-  struct addrinfo hints = {.ai_family = AF_INET6};
+  struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_V4MAPPED};
   // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
   // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
 
@@ -1599,7 +1599,7 @@ QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
-  struct addrinfo hints = {.ai_family = AF_INET6};
+  struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_V4MAPPED};
   // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
   // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
 
