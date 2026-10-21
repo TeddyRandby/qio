@@ -3,6 +3,7 @@
 
 #define QIO_API static inline
 
+#include "threads.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -231,7 +232,7 @@ struct qio_op_t {
 
 #define T struct qio_op_t
 #define NAME qd
-#define V_CONCURRENT
+#define V_THREADSAFE
 #include "vector.h"
 
 mtx_t _qio_freelist_mtx;
@@ -443,7 +444,7 @@ static uint32_t _qio_ring_entries;
 
 #define T struct io_uring_sqe
 #define NAME sqe
-#define V_CONCURRENT
+#define V_THREADSAFE
 #include "vector.h"
 
 static v_sqe _qio_queued_sqes;
@@ -465,7 +466,7 @@ QIO_API int32_t qio_loop() {
 
   while (true) {
     /* Read barrier */
-    unsigned head = io_uring_smp_load_acquire(_qio_cring_head);
+    uint32_t head = io_uring_smp_load_acquire(_qio_cring_head);
 
     /*
      * If we don't have any ops to queue and the receive buffer is empty:
@@ -510,9 +511,11 @@ QIO_API int32_t qio_loop() {
         io_uring_smp_store_release(_qio_sring_tail, tail);
       }
 
-      /* System call to trigger kernel */
-      if (buffered.len)
-        io_uring_enter(_qio_ring, buffered.len, 0, 0, nullptr);
+      if (buffered.len) {
+        int32_t submitted =
+            io_uring_enter(_qio_ring, buffered.len, 0, 0, nullptr);
+        assert(submitted = buffered.len);
+      }
 
       /* Free our buffered list */
       v_sqe_destroy(&buffered);
@@ -923,7 +926,7 @@ struct qio_kevent {
 
 #define T struct qio_kevent
 #define NAME kevent
-#define V_CONCURRENT
+#define V_THREADSAFE
 #include "vector.h"
 
 v_kevent _qio_pending_ops;
@@ -1504,7 +1507,7 @@ struct qio_cpevent {
 
 #define T struct qio_cpevent
 #define NAME cpevent
-#define V_CONCURRENT
+#define V_THREADSAFE
 #include "vector.h"
 
 #define QFD_INVALID_HANDLE ((uintptr_t)INVALID_HANDLE_VALUE)

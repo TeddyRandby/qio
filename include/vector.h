@@ -24,7 +24,7 @@
 #define GROW(type, loc, new_count)                                             \
   ((type *)realloc(loc, sizeof(type) * (new_count)))
 
-#ifdef V_CONCURRENT
+#ifdef V_THREADSAFE
 #if __has_include("threads.h")
 #include "threads.h"
 #define INIT_LOCK(self) (mtx_init(&self->mtx, mtx_plain))
@@ -32,7 +32,7 @@
 #define AQUIRE_LOCK(self) (mtx_lock(&self->mtx))
 #define RELEASE_LOCK(self) (mtx_unlock(&self->mtx))
 #else
-#error V_CONCURRENT set without threads.h
+#error V_THREADSAFE set without threads.h
 #endif
 #else
 #define INIT_LOCK(self)
@@ -46,7 +46,7 @@ struct TYPENAME {
   T *data;
   size_t len;
   size_t cap;
-#ifdef V_CONCURRENT
+#ifdef V_THREADSAFE
   mtx_t mtx;
 #endif
 };
@@ -130,7 +130,7 @@ LINKAGE T METHOD(pop)(TYPENAME *self) {
   return v;
 }
 
-#ifndef V_CONCURRENT
+#ifndef V_THREADSAFE
 LINKAGE T *METHOD(ref_at)(TYPENAME *self, size_t index) {
   assert(index < self->len);
   T *ref = self->data + index;
@@ -204,3 +204,4 @@ LINKAGE T METHOD(del)(TYPENAME *self, size_t index) {
 #undef DESTROY_LOCK
 #undef AQUIRE_LOCK
 #undef RELEASE_LOCK
+#undef V_THREADSAFE
