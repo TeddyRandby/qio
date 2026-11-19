@@ -186,9 +186,12 @@ QIO_API qfd_t qfd_stdin();
 QIO_API qfd_t qfd_stdout();
 QIO_API qfd_t qfd_stderr();
 
+enum qio_faddrfrom {
+  fQIO_ADDRFROM_PASSIVE = 1 << 1,
+};
 struct qio_addr;
-QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
-                         struct qio_addr *dst);
+QIO_API int qio_addrfrom(const char *restrict host, uint16_t port,
+                         uint16_t flags, struct qio_addr *dst);
 
 /*
  * The following are the 'queued' versions of corresponding POSIX functions.
@@ -406,11 +409,16 @@ QIO_API uint64_t qio_statsize(struct qio_stat *stat) {
   return stat->statxbuf.stx_size;
 }
 
-QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port, uint16_t flags,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
-  struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_V4MAPPED};
+  int aiflags = AI_V4MAPPED;
+
+  if (flags & fQIO_ADDRFROM_PASSIVE)
+    aiflags |= AI_PASSIVE;
+
+  struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = aiflags};
 
   // TODO: Maybe this needs to include AI_PASSIVE inorder to work for bind?
   // struct addrinfo hints = {.ai_family = AF_INET6, .ai_flags = AI_PASSIVE};
@@ -815,7 +823,7 @@ struct qio_addr {
 };
 
 // Implementation is the same as linux
-QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port, uint16_t flags,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
@@ -1598,7 +1606,7 @@ struct qio_addr {
   socklen_t len;
 };
 
-QIO_API int qio_addrfrom(const char *restrict src, uint16_t port,
+QIO_API int qio_addrfrom(const char *restrict src, uint16_t port, uint16_t flags,
                          struct qio_addr *dst) {
   struct addrinfo *addrinfo;
 
