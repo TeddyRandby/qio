@@ -196,8 +196,15 @@ QIO_API int qio_addrfrom(const char *restrict host, uint16_t port,
 /*
  * The following are the 'queued' versions of corresponding POSIX functions.
  */
-QIO_API qd_t qopen(const char *path);
-QIO_API qd_t qopenat(qfd_t fd, const char *path);
+enum qopen_type {
+  QOPEN_READ,
+  QOPEN_CREATE_APPEND,
+  QOPEN_APPEND,
+  QOPEN_CREATE_TRUNCATE,
+  QOPEN_TRUNCATE
+};
+QIO_API qd_t qopen(const char *path, uint16_t flags);
+QIO_API qd_t qopenat(qfd_t fd, const char *path, uint16_t flags);
 
 QIO_API qd_t qread(qfd_t fd, uint64_t n, uint8_t buf[n]);
 QIO_API qd_t qwrite(qfd_t fd, uint64_t n, const uint8_t buf[n]);
@@ -638,15 +645,39 @@ qd_t _qio_append_sqe(struct io_uring_sqe *src_sqe) {
   return qid;
 }
 
-QIO_API qd_t qopen(const char *path) { return qopenat(AT_FDCWD, path); }
+QIO_API qd_t qopen(const char *path, uint16_t flags) {
+  return qopenat(AT_FDCWD, path, flags);
+}
 
-QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+QIO_API qd_t qopenat(qfd_t fd, const char *path, uint16_t flags) {
+  uint16_t _flags = 0;
+  switch (flags) {
+  case QOPEN_READ:
+    _flags = O_RDONLY;
+    break;
+  case QOPEN_APPEND:
+    _flags = O_RDWR | O_APPEND;
+    break;
+  case QOPEN_TRUNCATE:
+    _flags = O_RDWR | O_TRUNC;
+    break;
+  case QOPEN_CREATE_APPEND:
+    _flags = O_RDWR | O_CREAT | O_APPEND;
+    break;
+  case QOPEN_CREATE_TRUNCATE:
+    _flags = O_RDWR | O_CREAT | O_TRUNC;
+    break;
+  default:
+    assert(false && "Impossible");
+    _flags = O_RDONLY;
+  }
+
   return _qio_append_sqe(&(struct io_uring_sqe){
       .opcode = IORING_OP_OPENAT,
       .fd = fd,
       .addr = (uintptr_t)path,
       .len = 0666, // Created file permissions
-      .open_flags = O_RDWR | O_CREAT | O_APPEND,
+      .open_flags = _flags,
   });
 }
 
@@ -881,6 +912,7 @@ struct qio_kevent {
 
     struct {
       const char *path;
+      uint16_t flags;
     } openat;
 
     struct {
@@ -1123,9 +1155,29 @@ int flush_pending(struct kevent *events, int nevents) {
 
     switch (ke->op) {
     case QIO_KQ_OPENAT: {
+      uint16_t _flags = 0;
+      switch (ke->openat.flags) {
+      case QOPEN_READ:
+        _flags = O_RDONLY;
+        break;
+      case QOPEN_APPEND:
+        _flags = O_RDWR | O_APPEND;
+        break;
+      case QOPEN_TRUNCATE:
+        _flags = O_RDWR | O_TRUNC;
+        break;
+      case QOPEN_CREATE_APPEND:
+        _flags = O_RDWR | O_CREAT | O_APPEND;
+        break;
+      case QOPEN_CREATE_TRUNCATE:
+        _flags = O_RDWR | O_CREAT | O_TRUNC;
+        break;
+      default:
+        assert(false && "Impossible");
+        _flags = O_RDONLY;
+      }
       // Perform the `openat` syscall.
-      int fd = openat(ke->ke.ident, ke->openat.path,
-                      O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK, 0666);
+      int fd = openat(ke->ke.ident, ke->openat.path, _flags | O_NONBLOCK, 0666);
 
       resolve_qio_kevent(ke, fd);
       continue;
@@ -1242,23 +1294,27 @@ QIO_API int32_t qio_loop() {
   }
 }
 
-QIO_API qd_t qopen(const char *path) {
+QIO_API qd_t qopen(const char *path, uint16_t flags) {
   return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_OPENAT,
 
       .ke.ident = AT_FDCWD,
 
       .openat.path = path,
+
+      .openat.flags = flags,
   });
 }
 
-QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+QIO_API qd_t qopenat(qfd_t fd, const char *path, uint16_t flags) {
   return _qio_append_kevent(&(struct qio_kevent){
       .op = QIO_KQ_OPENAT,
 
       .ke.ident = fd,
 
       .openat.path = path,
+
+      .openat.flags = flags,
   });
 };
 
@@ -1452,6 +1508,7 @@ struct qio_cpevent {
     struct {
       const char *path;
       qfd_t root;
+      uint16_t flags;
     } openat;
 
     struct {
@@ -1678,12 +1735,40 @@ void flush_pending() {
 
     switch (cpe->op) {
     case QIO_CP_OPENAT: {
+      uint16_t _flags = 0;
+      uint32_t _access = 0;
+      switch (cpe->openat.flags) {
+      case QOPEN_READ:
+        _access = GENERIC_READ;
+        _flags = OPEN_EXISTING;
+        break;
+      case QOPEN_APPEND:
+        _access = GENERIC_READ | GENERIC_WRITE;
+        _flags = OPEN_EXISTING;
+        break;
+      case QOPEN_TRUNCATE:
+        _access = GENERIC_READ | GENERIC_WRITE;
+        _flags = TRUNCATE_EXISTING;
+        break;
+      case QOPEN_CREATE_APPEND:
+        _access = GENERIC_READ | GENERIC_WRITE;
+        _flags = OPEN_ALWAYS;
+        break;
+      case QOPEN_CREATE_TRUNCATE:
+        _access = GENERIC_READ | GENERIC_WRITE;
+        _flags = CREATE_ALWAYS;
+        break;
+      default:
+        assert(false && "Impossible");
+        _access = GENERIC_READ;
+        _flags = OPEN_EXISTING;
+      }
       // TODO: Properly use the handle in openat.handle as a parent directory
       // to mimic the behavior of openat
       // Might need to use NtCreateFile instead
-      HANDLE fd = CreateFileA(cpe->openat.path, GENERIC_READ | GENERIC_WRITE,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                              OPEN_ALWAYS, FILE_FLAG_OVERLAPPED, NULL);
+      HANDLE fd = CreateFileA(cpe->openat.path, _access,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, _flags,
+                              FILE_FLAG_OVERLAPPED, NULL);
 
       if (fd == INVALID_HANDLE_VALUE) {
         int64_t err = GetLastError();
@@ -2080,19 +2165,21 @@ QIO_API int32_t qio_loop() {
   }
 }
 
-QIO_API qd_t qopen(const char *path) {
+QIO_API qd_t qopen(const char *path, uint16_t flags) {
   return _qio_append_cpevent(&(struct qio_cpevent){
       .op = QIO_CP_OPENAT,
       .openat.root = QFD_INVALID_HANDLE,
       .openat.path = path,
+      .openat.flags = flags,
   });
 }
 
-QIO_API qd_t qopenat(qfd_t fd, const char *path) {
+QIO_API qd_t qopenat(qfd_t fd, const char *path, uint16_t flags) {
   return _qio_append_cpevent(&(struct qio_cpevent){
       .op = QIO_CP_OPENAT,
       .openat.root = fd,
       .openat.path = path,
+      .openat.flags = flags,
   });
 }
 

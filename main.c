@@ -37,7 +37,7 @@ int main() {
 
   printf("[MAIN] Beginning work.\n");
 
-  qd_t file_qid = qopen("README.md");
+  qd_t file_qid = qopen("README.md", 0);
 
   printf("[MAIN] Began opening file: %i.\n", file_qid);
 
